@@ -7,7 +7,11 @@ mod notes;
 mod reminders;
 
 #[derive(Parser)]
-#[command(name = "apple", version, about = "Apple CLI for macOS (Notes/Reminders/Calendar/Messages)")]
+#[command(
+    name = "apple",
+    version,
+    about = "Apple CLI for macOS (Notes/Reminders/Calendar/Messages)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: TopCommand,
@@ -61,6 +65,8 @@ enum NotesSubcommand {
     Update(NotesUpdateArgs),
     Delete(NotesDeleteArgs),
     Move(NotesMoveArgs),
+    Share(NotesShareArgs),
+    Shared(NotesSharedCmd),
     Search(NotesSearchArgs),
     Show(NotesShowArgs),
     Attachments(NotesAttachmentsCmd),
@@ -222,6 +228,66 @@ struct NotesMoveArgs {
     /// Target folder name
     #[arg(long)]
     folder: String,
+}
+
+#[derive(Args)]
+struct NotesShareArgs {
+    /// Note id
+    id: String,
+    /// Apple Account email/handle to invite
+    #[arg(long)]
+    email: String,
+    /// Sharing backend: auto, ui, or private
+    #[arg(long, default_value = "auto")]
+    backend: String,
+    /// Share-sheet service to use: copy-link, messages, or mail
+    #[arg(long, default_value = "copy-link")]
+    service: String,
+    /// Seconds to wait for Notes/System Events UI state changes
+    #[arg(long, default_value = "30")]
+    timeout: u64,
+    /// Open the share sheet and stop before selecting a service or entering an invitee
+    #[arg(long)]
+    open_only: bool,
+}
+
+#[derive(Args)]
+struct NotesSharedCmd {
+    #[command(subcommand)]
+    command: NotesSharedSubcommand,
+}
+
+#[derive(Subcommand)]
+enum NotesSharedSubcommand {
+    List(NotesSharedListArgs),
+    Get(NotesSharedGetArgs),
+    Accept(NotesSharedAcceptArgs),
+}
+
+#[derive(Args)]
+struct NotesSharedListArgs {
+    /// Target account name (default: first account)
+    #[arg(long)]
+    account: Option<String>,
+    /// Optional folder name filter
+    #[arg(long)]
+    folder: Option<String>,
+}
+
+#[derive(Args)]
+struct NotesSharedGetArgs {
+    /// Note id
+    id: String,
+}
+
+#[derive(Args)]
+struct NotesSharedAcceptArgs {
+    /// iCloud Notes share URL to accept
+    #[arg(long)]
+    url: String,
+    /// Seconds to wait for Notes private helper state changes
+    #[arg(long, default_value = "60")]
+    timeout: u64,
 }
 
 #[derive(Args)]
@@ -703,6 +769,12 @@ fn main() -> Result<()> {
             NotesSubcommand::Update(args) => notes::notes_update(args),
             NotesSubcommand::Delete(args) => notes::notes_delete(args),
             NotesSubcommand::Move(args) => notes::notes_move(args),
+            NotesSubcommand::Share(args) => notes::notes_share(args),
+            NotesSubcommand::Shared(cmd) => match cmd.command {
+                NotesSharedSubcommand::List(args) => notes::notes_shared_list(args),
+                NotesSharedSubcommand::Get(args) => notes::notes_shared_get(args),
+                NotesSharedSubcommand::Accept(args) => notes::notes_shared_accept(args),
+            },
             NotesSubcommand::Search(args) => notes::notes_search(args),
             NotesSubcommand::Show(args) => notes::notes_show(args),
             NotesSubcommand::Attachments(cmd) => match cmd.command {
@@ -748,7 +820,9 @@ fn main() -> Result<()> {
             MessagesSubcommand::Buddies(args) => messages::messages_buddies(args),
             MessagesSubcommand::Send(args) => messages::messages_send(args),
             MessagesSubcommand::Chats(args) => messages::messages_chats(args),
-            MessagesSubcommand::ChatParticipants(args) => messages::messages_chat_participants(args),
+            MessagesSubcommand::ChatParticipants(args) => {
+                messages::messages_chat_participants(args)
+            }
             MessagesSubcommand::SendChat(args) => messages::messages_send_chat(args),
         },
     }

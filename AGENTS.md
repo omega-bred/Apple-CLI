@@ -23,6 +23,13 @@ Local install (no sudo):
 cargo install --path .
 ```
 
+Nix build/dev shell:
+
+```bash
+nix build
+nix develop
+```
+
 First run will trigger Automation permission prompts for Notes/Reminders/Calendar/Messages.
 If commands fail with `-10827` or `AppleEvent handler failed`, enable permissions:
 System Settings → Privacy & Security → Automation.
@@ -34,9 +41,19 @@ apple-cli/
 ├── README.md
 ├── AGENTS.md
 ├── Cargo.toml
+├── flake.nix
 ├── assets/
 │   └── apple-cli-banner.png
+├── docs/
+│   └── notes-private-helper-protocol.md
+├── helpers/
+│   ├── notes-accept-injected/
+│   │   └── AppleNotesAcceptInjected.m
+│   └── notes-share-injected/
+│       └── AppleNotesShareInjected.m
 └── src/
+    ├── bin/
+    │   └── apple-notes-helper.rs
     ├── main.rs
     ├── common.rs
     ├── notes.rs
@@ -47,12 +64,19 @@ apple-cli/
 
 `src/common.rs` contains AppleScript execution helpers and record parsing.
 
+`src/bin/apple-notes-helper.rs` is the JSON-lines protocol helper described in
+`docs/notes-private-helper-protocol.md`. Prefer evolving Notes toward that
+backend boundary rather than binding Java directly to private Objective-C
+symbols.
+
 ## Command surface (high level)
 
 Notes:
 - `apple notes accounts list`
 - `apple notes folders list|create|delete`
 - `apple notes list|get|create|update|delete|move|search|show`
+- `apple notes share [--backend auto|ui|private]`
+- `apple notes shared list|get|accept`
 - `apple notes attachments list|save|delete`
 
 Reminders:
@@ -78,6 +102,10 @@ Messages:
 ## Known limitations
 
 - Notes: attachment delete can fail on some macOS builds. Deleting the note removes attachments reliably.
+- Notes: sharing invitations are UI-automated through the Notes share sheet; the AppleScript dictionary only exposes the read-only `shared` flag.
+- Notes: `notes share --backend private` and `notes shared accept` compile and inject temporary private helpers into Notes. They only work on lab machines where DYLD library injection into Notes is allowed, and they quit/relaunch Notes.
+- Notes: `notes share` defaults to `--backend auto`, preferring the private helper when its SIP preflight passes and otherwise using the UI share-sheet backend.
+- Notes: private helpers preflight SIP and fail fast when injection is likely blocked. `APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1` bypasses that check for known-good lab setups.
 - Calendar: alarm delete can fail on some macOS builds; status updates are best-effort.
 - Messages: no transcript/history, read receipts, typing indicators, stickers, or voice notes (not exposed in AppleScript dictionary).
 

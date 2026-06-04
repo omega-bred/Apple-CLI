@@ -14,6 +14,10 @@ categories = ["command-line-utilities"]
 name = "apple"
 path = "src/main.rs"
 
+[[bin]]
+name = "apple-notes-helper"
+path = "src/bin/apple-notes-helper.rs"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

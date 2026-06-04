@@ -13,6 +13,7 @@ Apple CLI for macOS. Local-first automation for **Notes**, **Reminders**, **Cale
 - [Installation](#installation)
 - [Permissions](#permissions)
 - [Repository Structure](#repository-structure)
+- [Private Notes Backend](#private-notes-backend)
 - [Commands Reference](#commands-reference)
   - **Commands:** [notes](#notes) | [reminders](#reminders) | [calendar](#calendar) | [messages](#messages)
 - [Testing Status](#testing-status)
@@ -44,6 +45,13 @@ Or install directly from GitHub:
 cargo install --git https://github.com/Sankalpcreat/Apple-CLI.git --bin apple
 ```
 
+### Nix
+
+```bash
+nix build
+nix develop
+```
+
 **Requirements:** Rust 1.85+ ([rustup.rs](https://rustup.rs))
 
 ---
@@ -72,7 +80,16 @@ apple-cli/
 ├── README.md
 ├── assets/
 │   └── apple-cli-banner.png
+├── docs/
+│   └── notes-private-helper-protocol.md
+├── helpers/
+│   ├── notes-accept-injected/
+│   │   └── AppleNotesAcceptInjected.m
+│   └── notes-share-injected/
+│       └── AppleNotesShareInjected.m
 └── src/
+    ├── bin/
+    │   └── apple-notes-helper.rs
     ├── main.rs
     ├── common.rs
     ├── notes.rs
@@ -80,6 +97,20 @@ apple-cli/
     ├── calendar.rs
     └── messages.rs
 ```
+
+---
+
+## Private Notes Backend
+
+Notes is moving toward a backend model rather than a full AppleScript replacement in one jump. The current recommendation is to keep AppleScript/UI automation as a fallback and expose private Notes functionality through a stable JSON-lines helper protocol that both the Rust CLI and a future Java library can use.
+
+The repository now builds an `apple-notes-helper` binary with the first version of that protocol:
+
+```bash
+apple-notes-helper --stdio --backend auto
+```
+
+See [docs/notes-private-helper-protocol.md](docs/notes-private-helper-protocol.md) for the proposed helper architecture, operation names, response envelopes, and Java client sketch.
 
 ---
 
@@ -91,17 +122,28 @@ apple-cli/
 apple notes accounts list
 apple notes folders list|create|delete
 apple notes list|get|create|update|delete|move|search|show
+apple notes share
+apple notes shared list|get|accept
 apple notes attachments list|save|delete
 ```
 
 Examples:
 ```bash
 apple notes create --folder "Notes" --name "Test" --body "<p>Hello</p>"
+apple notes share <note_id> --email "person@example.com"
+apple notes share <note_id> --email "person@example.com" --backend private
+apple notes shared list
+apple notes shared accept --url "https://www.icloud.com/notes/..."
 apple notes update <note_id> --body "<p>Updated</p>" --attach /path/file.pdf
 apple notes attachments list <note_id>
 ```
 
 Notes limitations:
+- Notes sharing is driven through the macOS Notes share sheet because Notes exposes only a read-only `shared` flag in its AppleScript dictionary. It requires Automation access to Notes and Accessibility access for UI scripting.
+- `apple notes share` defaults to `--backend auto`: it uses the private helper when the SIP preflight says Notes DYLD injection is available, otherwise it uses the UI share-sheet backend.
+- `apple notes share --backend private` uses a private Notes-process helper for machines where DYLD injection into Notes is allowed. It compiles a temporary Objective-C dylib with `clang`, quits/relaunches Notes with `DYLD_INSERT_LIBRARIES`, and writes the helper result from inside the Notes sandbox. This is intended for local lab machines with SIP/library-injection protections relaxed.
+- `apple notes shared accept` uses the same private injected-helper approach to accept an iCloud Notes share URL from inside Notes.
+- Private helpers fail fast when SIP is enabled because macOS strips or blocks the required DYLD injection. Set `APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1` only when you know the target machine allows equivalent injection another way.
 - Attachment **delete** is best-effort; some builds return `AppleEvent handler failed`. Deleting the note removes attachments reliably.
 - Some Notes UI features (tables/checklists/voice notes) are not scriptable.
 
