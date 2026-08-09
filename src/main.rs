@@ -4,6 +4,7 @@ mod calendar;
 mod common;
 mod messages;
 mod notes;
+mod notes_server;
 mod reminders;
 
 #[derive(Parser)]
@@ -68,6 +69,7 @@ enum NotesSubcommand {
     Share(NotesShareArgs),
     Shared(NotesSharedCmd),
     Search(NotesSearchArgs),
+    Server(NotesServerArgs),
     Show(NotesShowArgs),
     Attachments(NotesAttachmentsCmd),
 }
@@ -301,6 +303,28 @@ struct NotesSearchArgs {
     /// Optional limit (0 = no limit)
     #[arg(long, default_value = "0")]
     limit: usize,
+}
+
+#[derive(Args)]
+pub struct NotesServerArgs {
+    /// Bind address for the local Notes REST API
+    #[arg(long, default_value = "127.0.0.1:3768")]
+    bind: String,
+    /// Sharing/backend preference passed to apple-notes-helper: auto, applescript, ui, or private
+    #[arg(long, default_value = "auto")]
+    backend: String,
+    /// Path or binary name for apple-notes-helper
+    #[arg(long, default_value = "apple-notes-helper")]
+    helper: String,
+    /// Poll interval in seconds for webhook note-change detection
+    #[arg(long, default_value = "10")]
+    poll_interval: u64,
+    /// Optional bearer token required for API requests
+    #[arg(long, env = "APPLE_NOTES_SERVER_TOKEN")]
+    token: Option<String>,
+    /// Allow unauthenticated requests even when binding a non-loopback address
+    #[arg(long)]
+    allow_unauthenticated: bool,
 }
 
 #[derive(Args)]
@@ -776,6 +800,7 @@ fn main() -> Result<()> {
                 NotesSharedSubcommand::Accept(args) => notes::notes_shared_accept(args),
             },
             NotesSubcommand::Search(args) => notes::notes_search(args),
+            NotesSubcommand::Server(args) => notes_server::notes_server(args),
             NotesSubcommand::Show(args) => notes::notes_show(args),
             NotesSubcommand::Attachments(cmd) => match cmd.command {
                 NotesAttachmentsSubcommand::List(args) => notes::notes_attachments_list(args),

@@ -48,6 +48,7 @@
               cargo
               clang
               clippy
+              python3
               rustc
               rustfmt
             ];

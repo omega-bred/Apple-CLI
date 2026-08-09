@@ -34,6 +34,13 @@ static NSString *defaultResultPath(void) {
     return [dir stringByAppendingPathComponent:@"notes-share-result.json"];
 }
 
+static long shareTimeoutSeconds(void) {
+    NSString *value = [[[NSProcessInfo processInfo] environment] objectForKey:@"APPLE_CLI_NOTES_SHARE_TIMEOUT"];
+    NSInteger parsed = value.integerValue;
+    if (parsed <= 0) return 120;
+    return MAX((long)parsed, 1L);
+}
+
 static void writeResult(NSDictionary *result) {
     NSString *path = [[[NSProcessInfo processInfo] environment] objectForKey:@"APPLE_CLI_NOTES_SHARE_RESULT"];
     if (path.length == 0) {
@@ -94,6 +101,7 @@ static id containerForNote(id controller, id note) {
 static void performShare(void) {
     @autoreleasepool {
         @try {
+            NSLog(@"apple-cli notes share: loading frameworks");
             dlopen("/System/Library/PrivateFrameworks/NotesShared.framework/NotesShared", RTLD_NOW);
             dlopen("/System/Library/PrivateFrameworks/NotesUI.framework/NotesUI", RTLD_NOW);
             dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_NOW);
@@ -101,12 +109,14 @@ static void performShare(void) {
             NSDictionary *env = [[NSProcessInfo processInfo] environment];
             NSString *noteURI = env[@"APPLE_CLI_NOTES_SHARE_NOTE_ID"];
             NSString *email = env[@"APPLE_CLI_NOTES_SHARE_EMAIL"];
+            long timeoutSeconds = shareTimeoutSeconds();
             if (noteURI.length == 0 || email.length == 0) {
                 writeResult(@{@"status": @"error", @"error": @"APPLE_CLI_NOTES_SHARE_NOTE_ID and APPLE_CLI_NOTES_SHARE_EMAIL are required"});
                 return;
             }
 
             NSError *loadError = nil;
+            NSLog(@"apple-cli notes share: loading note %@", noteURI);
             id note = loadNote(noteURI, &loadError);
             if (!note) {
                 writeResult(@{@"status": @"error", @"stage": @"load-note", @"error": [NSString stringWithFormat:@"%@", loadError]});
@@ -134,13 +144,30 @@ static void performShare(void) {
             dispatch_semaphore_t participantSema = dispatch_semaphore_create(0);
             __block id participant = nil;
             __block NSError *participantError = nil;
+            __block BOOL participantCompleted = NO;
+            __block BOOL participantTimedOut = NO;
+            NSLog(@"apple-cli notes share: fetching participant %@ with timeout %ld", email, timeoutSeconds);
+            [NSThread detachNewThreadWithBlock:^{
+                @autoreleasepool {
+                    [NSThread sleepForTimeInterval:(NSTimeInterval)timeoutSeconds];
+                    if (!participantCompleted) {
+                        participantTimedOut = YES;
+                        writeResult(@{@"status": @"error", @"stage": @"participant", @"note": title, @"email": email, @"error": @"timed out fetching participant"});
+                        dispatch_semaphore_signal(participantSema);
+                    }
+                }
+            }];
             ((void (*)(id, SEL, id, id))objc_msgSend)(container, NSSelectorFromString(@"fetchShareParticipantWithEmailAddress:completionHandler:"), email, ^(id p, NSError *error) {
+                if (participantTimedOut) {
+                    return;
+                }
                 participant = p;
                 participantError = error;
+                participantCompleted = YES;
                 dispatch_semaphore_signal(participantSema);
             });
-            long participantWait = dispatch_semaphore_wait(participantSema, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
-            if (participantWait != 0 || !participant) {
+            dispatch_semaphore_wait(participantSema, DISPATCH_TIME_FOREVER);
+            if (participantTimedOut || !participant) {
                 writeResult(@{@"status": @"error", @"stage": @"participant", @"note": title, @"error": [NSString stringWithFormat:@"%@", participantError ?: @"timed out fetching participant"]});
                 return;
             }
@@ -158,12 +185,13 @@ static void performShare(void) {
             dispatch_semaphore_t fetchSema = dispatch_semaphore_create(0);
             __block CKRecord *rootRecord = nil;
             __block NSError *fetchError = nil;
+            NSLog(@"apple-cli notes share: fetching root record");
             ((void (*)(id, SEL, id, id))objc_msgSend)(database, NSSelectorFromString(@"fetchRecordWithID:completionHandler:"), rootRecordID, ^(CKRecord *record, NSError *error) {
                 rootRecord = record;
                 fetchError = error;
                 dispatch_semaphore_signal(fetchSema);
             });
-            long fetchWait = dispatch_semaphore_wait(fetchSema, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
+            long fetchWait = dispatch_semaphore_wait(fetchSema, dispatch_time(DISPATCH_TIME_NOW, timeoutSeconds * NSEC_PER_SEC));
             if (fetchWait != 0 || !rootRecord) {
                 writeResult(@{@"status": @"error", @"stage": @"fetch-root-record", @"note": title, @"error": [NSString stringWithFormat:@"%@", fetchError ?: @"timed out fetching root record"]});
                 return;
@@ -179,6 +207,7 @@ static void performShare(void) {
             dispatch_semaphore_t saveSema = dispatch_semaphore_create(0);
             __block NSArray<CKRecord *> *savedRecords = nil;
             __block NSError *saveError = nil;
+            NSLog(@"apple-cli notes share: saving share");
             CKModifyRecordsOperation *operation = [[CKModifyRecordsOperation alloc] initWithRecordsToSave:@[rootRecord, share] recordIDsToDelete:nil];
             operation.savePolicy = CKRecordSaveAllKeys;
             operation.modifyRecordsCompletionBlock = ^(NSArray<CKRecord *> *records, NSArray<CKRecordID *> *deletedRecordIDs, NSError *error) {
@@ -188,7 +217,7 @@ static void performShare(void) {
             };
             [database addOperation:operation];
 
-            long saveWait = dispatch_semaphore_wait(saveSema, dispatch_time(DISPATCH_TIME_NOW, 120 * NSEC_PER_SEC));
+            long saveWait = dispatch_semaphore_wait(saveSema, dispatch_time(DISPATCH_TIME_NOW, timeoutSeconds * NSEC_PER_SEC));
             if (saveWait != 0 || saveError) {
                 writeResult(@{@"status": @"error", @"stage": @"save", @"note": title, @"error": [NSString stringWithFormat:@"%@", saveError ?: @"timed out saving share"]});
                 return;

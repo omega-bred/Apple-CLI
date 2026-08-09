@@ -220,7 +220,7 @@ pub fn notes_shared_accept(args: NotesSharedAcceptArgs) -> Result<()> {
             "failed to relaunch Notes with the injected private accept helper".to_string()
         })?;
 
-    let deadline = Instant::now() + Duration::from_secs(args.timeout);
+    let deadline = Instant::now() + Duration::from_secs(args.timeout.saturating_add(20));
     while Instant::now() < deadline {
         if result_path.exists() {
             let result_text = fs::read_to_string(&result_path)
@@ -438,7 +438,8 @@ on run argv
             set AppleScript's text item delimiters to ""
             repeat with fp in fileList
                 if fp is not "" then
-                    make new attachment at end of attachments of newNote with data (POSIX file fp)
+                    set attachmentFile to (fp as string) as POSIX file
+                    make new attachment at end of attachments of newNote with data attachmentFile
                 end if
             end repeat
         end if
@@ -480,7 +481,8 @@ on run argv
             set AppleScript's text item delimiters to ""
             repeat with fp in fileList
                 if fp is not "" then
-                    make new attachment at end of attachments of n with data (POSIX file fp)
+                    set attachmentFile to (fp as string) as POSIX file
+                    make new attachment at end of attachments of n with data attachmentFile
                 end if
             end repeat
         end if
@@ -737,6 +739,7 @@ fn notes_share_private(args: NotesShareArgs) -> Result<()> {
         .env("DYLD_INSERT_LIBRARIES", &dylib_path)
         .env("APPLE_CLI_NOTES_SHARE_NOTE_ID", &args.id)
         .env("APPLE_CLI_NOTES_SHARE_EMAIL", &args.email)
+        .env("APPLE_CLI_NOTES_SHARE_TIMEOUT", args.timeout.to_string())
         .env("APPLE_CLI_NOTES_SHARE_RESULT", &result_path)
         .stdout(Stdio::from(log_file.try_clone()?))
         .stderr(Stdio::from(log_file))

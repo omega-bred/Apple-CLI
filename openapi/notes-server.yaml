@@ -1,0 +1,589 @@
+openapi: 3.1.0
+info:
+  title: Apple Notes Local API
+  version: 0.1.0
+  description: Local REST API for managing Apple Notes through apple-cli.
+servers:
+  - url: http://127.0.0.1:3768
+security:
+  - bearerAuth: []
+paths:
+  /openapi.yaml:
+    get:
+      operationId: getOpenApi
+      summary: Get this OpenAPI document.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check.
+      security: []
+      responses:
+        "200":
+          description: Server health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Get helper capabilities and diagnostics.
+      responses:
+        "200":
+          description: Current helper capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/accounts:
+    get:
+      operationId: listAccounts
+      summary: List Notes accounts.
+      responses:
+        "200":
+          description: Notes accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/folders:
+    get:
+      operationId: listFolders
+      summary: List folders.
+      parameters:
+        - $ref: "#/components/parameters/Account"
+      responses:
+        "200":
+          description: Folders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    post:
+      operationId: createFolder
+      summary: Create a folder.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFolderRequest"
+      responses:
+        "200":
+          description: Created folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/folders/delete:
+    post:
+      operationId: deleteFolder
+      summary: Delete a folder.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteFolderRequest"
+      responses:
+        "200":
+          description: Deleted folder status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/folders/rename:
+    post:
+      operationId: renameFolder
+      summary: Rename a folder.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameFolderRequest"
+      responses:
+        "200":
+          description: Renamed folder status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes:
+    get:
+      operationId: listNotes
+      summary: List notes.
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - $ref: "#/components/parameters/Folder"
+        - name: sharedOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    post:
+      operationId: createNote
+      summary: Create a note with optional file path or inline base64 attachments.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteNoteRequest"
+      responses:
+        "200":
+          description: Created note.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/search:
+    get:
+      operationId: searchNotes
+      summary: Search notes.
+      parameters:
+        - $ref: "#/components/parameters/Account"
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}:
+    get:
+      operationId: getNote
+      summary: Get a note by opaque Notes id.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Note detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    patch:
+      operationId: updateNote
+      summary: Update note title/body and add optional attachments.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteNoteRequest"
+      responses:
+        "200":
+          description: Updated note.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    delete:
+      operationId: deleteNote
+      summary: Delete a note.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Deleted note status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}/move:
+    post:
+      operationId: moveNote
+      summary: Move a note to another folder.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveNoteRequest"
+      responses:
+        "200":
+          description: Moved note status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}/show:
+    post:
+      operationId: showNote
+      summary: Show a note in Notes.app.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Show status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}/attachments:
+    get:
+      operationId: listAttachments
+      summary: List note attachments.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Attachments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    post:
+      operationId: addAttachments
+      summary: Add file path or inline base64 attachments to a note.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddAttachmentsRequest"
+      responses:
+        "200":
+          description: Updated note.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}/attachments/content:
+    get:
+      operationId: getAttachmentContent
+      summary: Save an attachment to a temporary file and return its base64 content.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+        - name: attachmentId
+          in: query
+          schema:
+            type: string
+        - name: name
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Attachment content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/notes/{noteId}/attachments/delete:
+    post:
+      operationId: deleteAttachment
+      summary: Delete an attachment by id or name.
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAttachmentRequest"
+      responses:
+        "200":
+          description: Delete status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/shares:
+    post:
+      operationId: shareNote
+      summary: Share a note with a remote Apple Account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShareNoteRequest"
+      responses:
+        "200":
+          description: Share result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/shares/accept:
+    post:
+      operationId: acceptShare
+      summary: Accept an iCloud Notes share URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptShareRequest"
+      responses:
+        "200":
+          description: Accept result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List in-memory webhook subscriptions.
+      responses:
+        "200":
+          description: Subscriptions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+    post:
+      operationId: createWebhook
+      summary: Subscribe to polling-based note change events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookRequest"
+      responses:
+        "200":
+          description: Created subscription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /v1/webhooks/{webhookId}:
+    delete:
+      operationId: deleteWebhook
+      summary: Delete an in-memory webhook subscription.
+      parameters:
+        - name: webhookId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Delete status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Account:
+      name: account
+      in: query
+      schema:
+        type: string
+    Folder:
+      name: folder
+      in: query
+      schema:
+        type: string
+    NoteId:
+      name: noteId
+      in: path
+      required: true
+      description: Opaque Apple Notes id. For x-coredata ids, use b64:<base64url-no-padding(id)> as the path segment so slashes do not pass through the HTTP router.
+      schema:
+        type: string
+  schemas:
+    Envelope:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        result:
+          description: Operation-specific result from apple-notes-helper.
+        error:
+          $ref: "#/components/schemas/Error"
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        details: {}
+    Health:
+      type: object
+      required: [ok, service]
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+        version:
+          type: string
+    CreateFolderRequest:
+      type: object
+      required: [name]
+      properties:
+        account:
+          type: string
+        name:
+          type: string
+        parent:
+          type: string
+    DeleteFolderRequest:
+      type: object
+      required: [name]
+      properties:
+        account:
+          type: string
+        name:
+          type: string
+        parent:
+          type: string
+    RenameFolderRequest:
+      type: object
+      required: [name, newName]
+      properties:
+        account:
+          type: string
+        name:
+          type: string
+        newName:
+          type: string
+        parent:
+          type: string
+    WriteNoteRequest:
+      type: object
+      properties:
+        account:
+          type: string
+        folder:
+          type: string
+        title:
+          type: string
+        name:
+          type: string
+        html:
+          type: string
+        body:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentInput"
+    AddAttachmentsRequest:
+      type: object
+      required: [attachments]
+      properties:
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentInput"
+    AttachmentInput:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Local path on the machine running the server.
+        name:
+          type: string
+        mimeType:
+          type: string
+        dataBase64:
+          type: string
+          description: Inline attachment data. The server writes it to a temporary local file before passing it to Notes.
+      anyOf:
+        - required: [path]
+        - required: [dataBase64]
+    MoveNoteRequest:
+      type: object
+      required: [folder]
+      properties:
+        account:
+          type: string
+        folder:
+          type: string
+    DeleteAttachmentRequest:
+      type: object
+      properties:
+        attachmentId:
+          type: string
+        name:
+          type: string
+      anyOf:
+        - required: [attachmentId]
+        - required: [name]
+    ShareNoteRequest:
+      type: object
+      required: [noteId, invitee]
+      properties:
+        noteId:
+          type: string
+        invitee:
+          type: string
+        email:
+          type: string
+        backend:
+          type: string
+          enum: [auto, ui, private, applescript]
+        timeout:
+          type: integer
+          minimum: 1
+    AcceptShareRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+        timeout:
+          type: integer
+          minimum: 1
+    CreateWebhookRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+            enum: [note.created, note.updated, note.deleted]

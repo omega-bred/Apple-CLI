@@ -29,10 +29,11 @@ apple-notes-helper --stdio --backend auto
 ```
 
 The current `apple-notes-helper` binary implements protocol version `1`.
-Ordinary Notes, folder, account, and attachment operations are adapter-backed by
-AppleScript today. `shares.create` and `shares.accept` call the proven
-Notes-process private helpers so Java callers can use the same stable protocol
-while the internals continue moving toward private APIs.
+Account, folder, note, and attachment operations use the injected Notes-process
+private helper when `--backend private` is selected, or when `--backend auto`
+detects a SIP-disabled/private-helper-capable machine. `shares.create` and
+`shares.accept` call dedicated Notes-process private helpers so Java callers can
+use the same stable protocol while the internals continue to harden.
 
 The helper may internally choose one of two execution modes:
 
@@ -258,8 +259,8 @@ available, but do not make Java callers depend on it as the primary key.
 - `shares.removeParticipant`
 - `shares.stopSharing`
 
-Only `shares.create` and `shares.accept` are proven private-helper operations
-today. Participant management should be added once the helper can round-trip
+Only `shares.create` and `shares.accept` have private-helper entry points today.
+Participant management should be added once the helper can reliably round-trip
 real shares across two accounts.
 
 ## Example Requests
@@ -377,12 +378,11 @@ public final class AppleNotesClient implements AutoCloseable {
 
 1. Keep current CLI commands stable.
 2. Introduce `apple-notes-helper --stdio` and implement `helper.capabilities`.
-3. Move proven sharing and share acceptance into protocol handlers.
-4. Port read-only Notes operations: accounts, folders, list, get, search,
-   attachments list.
-5. Port write operations: create, update, delete, move, attachment save/delete.
-6. Add Java client package against the protocol.
-7. Make the Rust CLI call the helper for Notes when `--backend private` or
+3. Keep the OpenAPI server and Java client on the helper protocol instead of
+   binding directly to private Objective-C symbols.
+4. Add share participant listing/update/remove once private share creation is
+   reliable across two Apple accounts.
+5. Make the Rust CLI call the helper for Notes when `--backend private` or
    `--backend auto` selects private, with AppleScript retained as fallback.
 
 ## Compatibility Rules

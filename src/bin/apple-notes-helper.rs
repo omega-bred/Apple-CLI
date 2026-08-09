@@ -3,15 +3,21 @@ use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
+use std::fs::{self, File};
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
 #[path = "../common.rs"]
 mod common;
 
 use common::{parse_records, run_applescript, FS, RS};
+
+const INJECTED_PRIVATE_HELPER_SOURCE: &str =
+    include_str!("../../helpers/notes-private-injected/AppleNotesPrivateInjected.m");
 
 #[derive(Parser)]
 #[command(
@@ -115,6 +121,16 @@ fn handle_request(request: Request, backend: &str) -> Value {
 }
 
 fn dispatch(op: &str, params: &Value, backend: &str) -> Result<Value> {
+    if should_try_private_operation(op, backend) {
+        match run_private_operation(op, params) {
+            Ok(result) => return Ok(result),
+            Err(error) if backend == "auto" => {
+                eprintln!("apple-notes-helper private backend fallback for {op}: {error}");
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
     match op {
         "helper.ping" => Ok(json!({ "pong": true })),
         "helper.shutdown" => Ok(json!({ "shutdown": true })),
@@ -139,6 +155,257 @@ fn dispatch(op: &str, params: &Value, backend: &str) -> Result<Value> {
         "shares.accept" => shares_accept(params),
         other => Err(anyhow!("unsupported operation: {other}")),
     }
+}
+
+fn should_try_private_operation(op: &str, backend: &str) -> bool {
+    if !matches!(backend, "auto" | "private") {
+        return false;
+    }
+    let supported = matches!(
+        op,
+        "accounts.list"
+            | "folders.list"
+            | "folders.create"
+            | "folders.rename"
+            | "folders.delete"
+            | "notes.list"
+            | "notes.get"
+            | "notes.create"
+            | "notes.update"
+            | "notes.delete"
+            | "notes.move"
+            | "notes.search"
+            | "attachments.list"
+            | "attachments.save"
+            | "attachments.delete"
+    );
+    supported && (backend == "private" || private_notes_injection_available())
+}
+
+fn private_notes_injection_available() -> bool {
+    env::var_os("APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT").is_some()
+        || sip_status().as_deref() == Some("disabled")
+}
+
+fn run_private_operation(op: &str, params: &Value) -> Result<Value> {
+    let work_dir = PathBuf::from("/tmp").join(format!(
+        "apple-cli-notes-private-{}-{}",
+        std::process::id(),
+        uuid_like_timestamp()
+    ));
+    fs::create_dir_all(&work_dir)
+        .with_context(|| format!("failed to create {}", work_dir.display()))?;
+
+    let source_path = work_dir.join("AppleNotesPrivateInjected.m");
+    let dylib_path = work_dir.join("libAppleNotesPrivateInjected.dylib");
+    let request_path = work_dir.join("request.json");
+    let log_path = work_dir.join("notes-private.log");
+    fs::write(&source_path, INJECTED_PRIVATE_HELPER_SOURCE)
+        .with_context(|| format!("failed to write {}", source_path.display()))?;
+    compile_injected_helper(&source_path, &dylib_path)?;
+
+    let prepared_params = prepare_private_params(&work_dir, op, params)?;
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&json!({ "op": op, "params": prepared_params }))?,
+    )
+    .with_context(|| format!("failed to write {}", request_path.display()))?;
+
+    let result_path = notes_private_result_path(&format!(
+        "notes-private-result-{}-{}.json",
+        std::process::id(),
+        uuid_like_timestamp()
+    ))?;
+    if let Some(parent) = result_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let _ = fs::remove_file(&result_path);
+    let _ = fs::remove_file(&log_path);
+
+    let _ = Command::new("/usr/bin/killall").arg("Notes").status();
+    thread::sleep(Duration::from_secs(1));
+
+    let log_file = File::create(&log_path)
+        .with_context(|| format!("failed to create {}", log_path.display()))?;
+    Command::new("/System/Applications/Notes.app/Contents/MacOS/Notes")
+        .env("DYLD_INSERT_LIBRARIES", &dylib_path)
+        .env("APPLE_CLI_NOTES_PRIVATE_REQUEST", &request_path)
+        .env("APPLE_CLI_NOTES_PRIVATE_RESULT", &result_path)
+        .stdout(Stdio::from(log_file.try_clone()?))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .context("failed to relaunch Notes with the injected private helper")?;
+
+    let timeout = params
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .unwrap_or(180)
+        .max(1);
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    while Instant::now() < deadline {
+        if result_path.exists() {
+            let result_text = fs::read_to_string(&result_path)
+                .with_context(|| format!("failed to read {}", result_path.display()))?;
+            let result: Value = serde_json::from_str(&result_text)
+                .with_context(|| format!("failed to parse {}", result_path.display()))?;
+            if result.get("status").and_then(Value::as_str) == Some("ok") {
+                let payload = result.get("result").cloned().unwrap_or(Value::Null);
+                return postprocess_private_result(op, params, payload);
+            }
+            return Err(anyhow!(
+                "{}",
+                result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("private Notes helper returned an error")
+            ));
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+
+    let log_tail = fs::read_to_string(&log_path)
+        .map(|text| text.chars().rev().take(6000).collect::<String>())
+        .unwrap_or_default()
+        .chars()
+        .rev()
+        .collect::<String>();
+    Err(anyhow!(
+        "timed out waiting for private Notes helper result at {}. Log: {}",
+        result_path.display(),
+        log_tail
+    ))
+}
+
+fn postprocess_private_result(op: &str, params: &Value, payload: Value) -> Result<Value> {
+    if op != "attachments.save" {
+        return Ok(payload);
+    }
+    let Some(output) = param_string_any(params, &["output", "outputDir", "output_dir"]) else {
+        return Ok(payload);
+    };
+    let Some(source) = payload
+        .get("sourcePath")
+        .or_else(|| payload.get("path"))
+        .and_then(Value::as_str)
+    else {
+        return Ok(payload);
+    };
+    let source_path = PathBuf::from(source);
+    if !source_path.exists() {
+        return Ok(payload);
+    }
+    let file_name = source_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "attachment".to_string());
+    let output_dir = PathBuf::from(output);
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+    let destination = output_dir.join(file_name);
+    fs::copy(&source_path, &destination).with_context(|| {
+        format!(
+            "failed to copy private attachment {} to {}",
+            source_path.display(),
+            destination.display()
+        )
+    })?;
+    Ok(json!({ "path": destination }))
+}
+
+fn prepare_private_params(work_dir: &Path, op: &str, params: &Value) -> Result<Value> {
+    if op != "notes.create" && op != "notes.update" {
+        return Ok(params.clone());
+    }
+    let mut prepared = params.clone();
+    stage_attachment_array(work_dir, &mut prepared, "attachments")?;
+    stage_attachment_array(work_dir, &mut prepared, "attach")?;
+    Ok(prepared)
+}
+
+fn stage_attachment_array(work_dir: &Path, params: &mut Value, key: &str) -> Result<()> {
+    let Some(paths) = params.get(key).and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let staged_dir = work_dir.join("attachments");
+    fs::create_dir_all(&staged_dir)
+        .with_context(|| format!("failed to create {}", staged_dir.display()))?;
+    let mut staged = Vec::with_capacity(paths.len());
+    for (index, path) in paths.iter().filter_map(Value::as_str).enumerate() {
+        let source = PathBuf::from(path);
+        let file_name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "attachment".to_string());
+        let mut destination = staged_dir.join(&file_name);
+        if destination.exists() {
+            destination = staged_dir.join(format!("{index}-{file_name}"));
+        }
+        fs::copy(&source, &destination).with_context(|| {
+            format!(
+                "failed to stage private Notes attachment {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        staged.push(Value::String(destination.to_string_lossy().to_string()));
+    }
+    if let Some(object) = params.as_object_mut() {
+        object.insert(key.to_string(), Value::Array(staged));
+    }
+    Ok(())
+}
+
+fn compile_injected_helper(source_path: &Path, dylib_path: &Path) -> Result<()> {
+    let clang = if Path::new("/usr/bin/clang").exists() {
+        PathBuf::from("/usr/bin/clang")
+    } else {
+        PathBuf::from("clang")
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64e"
+    } else {
+        "x86_64"
+    };
+    let output = Command::new(&clang)
+        .arg("-arch")
+        .arg(arch)
+        .arg("-dynamiclib")
+        .arg("-fobjc-arc")
+        .arg("-framework")
+        .arg("Foundation")
+        .arg("-framework")
+        .arg("CoreData")
+        .arg("-framework")
+        .arg("CloudKit")
+        .arg(source_path)
+        .arg("-o")
+        .arg(dylib_path)
+        .output()
+        .with_context(|| format!("failed to execute {}", clang.display()))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "failed to compile private Notes helper with {}: {}{}",
+            clang.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn notes_private_result_path(file_name: &str) -> Result<PathBuf> {
+    let home = env::var("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join("Library/Containers/com.apple.Notes/Data/Library/Application Support/apple-cli")
+        .join(file_name))
+}
+
+fn uuid_like_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}-{}", now.as_secs(), now.subsec_nanos())
 }
 
 fn error_response(
@@ -189,10 +456,6 @@ fn helper_capabilities(backend: &str) -> Result<Value> {
     let notes_process_injection = sip.as_deref() == Some("disabled")
         || env::var_os("APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT").is_some();
     let ui_automation = accessibility_enabled();
-    let notes_account_count = accounts_list()
-        .ok()
-        .and_then(|value| value.as_array().map(Vec::len))
-        .unwrap_or(0);
 
     Ok(json!({
         "protocolVersion": 1,
@@ -207,8 +470,7 @@ fn helper_capabilities(backend: &str) -> Result<Value> {
         },
         "diagnostics": {
             "sip": sip.unwrap_or_else(|| "unknown".to_string()),
-            "accessibility": ui_automation,
-            "notesAccountCount": notes_account_count
+            "accessibility": ui_automation
         }
     }))
 }
@@ -234,15 +496,36 @@ fn sip_status() -> Option<String> {
 }
 
 fn accessibility_enabled() -> bool {
-    let output = Command::new("/usr/bin/osascript")
+    let mut command = Command::new("/usr/bin/osascript");
+    command
         .arg("-e")
-        .arg(r#"tell application "System Events" to UI elements enabled"#)
-        .output();
+        .arg(r#"tell application "System Events" to UI elements enabled"#);
+    let output = command_output_with_timeout(command, Duration::from_secs(2));
     output
-        .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "true")
         .unwrap_or(false)
+}
+
+fn command_output_with_timeout(mut command: Command, timeout: Duration) -> Option<Output> {
+    let start = Instant::now();
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    loop {
+        if child.try_wait().ok()?.is_some() {
+            return child.wait_with_output().ok();
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().ok();
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn accounts_list() -> Result<Value> {
@@ -573,7 +856,8 @@ on run argv
             set AppleScript's text item delimiters to ""
             repeat with fp in fileList
                 if fp is not "" then
-                    make new attachment at end of attachments of newNote with data (POSIX file fp)
+                    set attachmentFile to (fp as string) as POSIX file
+                    make new attachment at end of attachments of newNote with data attachmentFile
                 end if
             end repeat
         end if
@@ -610,7 +894,8 @@ on run argv
             set AppleScript's text item delimiters to ""
             repeat with fp in fileList
                 if fp is not "" then
-                    make new attachment at end of attachments of n with data (POSIX file fp)
+                    set attachmentFile to (fp as string) as POSIX file
+                    make new attachment at end of attachments of n with data attachmentFile
                 end if
             end repeat
         end if
@@ -825,9 +1110,14 @@ on run argv
         set n to note id noteId
         set target to missing value
         if attId is not "" then
-            set target to first attachment of n whose id is attId
-        else
-            set target to first attachment of n whose name is attName
+            try
+                set target to first attachment of n whose id is attId
+            end try
+        end if
+        if target is missing value and attName is not "" then
+            try
+                set target to first attachment of n whose name is attName
+            end try
         end if
         if target is missing value then error "Attachment not found"
         set outDirAlias to POSIX file outDir as alias
@@ -861,9 +1151,14 @@ on run argv
         set n to note id noteId
         set target to missing value
         if attId is not "" then
-            set target to first attachment of n whose id is attId
-        else
-            set target to first attachment of n whose name is attName
+            try
+                set target to first attachment of n whose id is attId
+            end try
+        end if
+        if target is missing value and attName is not "" then
+            try
+                set target to first attachment of n whose name is attName
+            end try
         end if
         if target is missing value then error "Attachment not found"
         delete target

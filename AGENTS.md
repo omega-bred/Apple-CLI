@@ -42,6 +42,8 @@ apple-cli/
 ├── AGENTS.md
 ├── Cargo.toml
 ├── flake.nix
+├── openapi/
+│   └── notes-server.yaml
 ├── assets/
 │   └── apple-cli-banner.png
 ├── docs/
@@ -57,6 +59,7 @@ apple-cli/
     ├── main.rs
     ├── common.rs
     ├── notes.rs
+    ├── notes_server.rs
     ├── reminders.rs
     ├── calendar.rs
     └── messages.rs
@@ -69,15 +72,25 @@ apple-cli/
 backend boundary rather than binding Java directly to private Objective-C
 symbols.
 
+`openapi/notes-server.yaml` is the source of truth for the Notes REST API.
+`build.rs` parses it and generates the Axum route table from operation IDs.
+When changing the REST surface, update the OpenAPI spec first and then add or
+rename the matching handler in `src/notes_server.rs`.
+Path note IDs should support the `b64:<base64url-no-padding(id)>` form because
+Apple Notes `x-coredata://...` IDs contain slashes that cannot live safely in a
+single router path segment.
+
 ## Command surface (high level)
 
 Notes:
 - `apple notes accounts list`
 - `apple notes folders list|create|delete`
+- Notes REST API only: `POST /v1/folders/rename`
 - `apple notes list|get|create|update|delete|move|search|show`
 - `apple notes share [--backend auto|ui|private]`
 - `apple notes shared list|get|accept`
 - `apple notes attachments list|save|delete`
+- `apple notes server`
 
 Reminders:
 - `apple reminders lists`
@@ -106,12 +119,22 @@ Messages:
 - Notes: `notes share --backend private` and `notes shared accept` compile and inject temporary private helpers into Notes. They only work on lab machines where DYLD library injection into Notes is allowed, and they quit/relaunch Notes.
 - Notes: `notes share` defaults to `--backend auto`, preferring the private helper when its SIP preflight passes and otherwise using the UI share-sheet backend.
 - Notes: private helpers preflight SIP and fail fast when injection is likely blocked. `APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1` bypasses that check for known-good lab setups.
+- Notes REST API: `apple notes server` binds to localhost by default and serves `/openapi.yaml`. Webhook subscriptions are in-memory and polling-based because Notes does not expose native AppleScript push-change events.
 - Calendar: alarm delete can fail on some macOS builds; status updates are best-effort.
 - Messages: no transcript/history, read receipts, typing indicators, stickers, or voice notes (not exposed in AppleScript dictionary).
 
 ## Testing
 
-There is no automated test suite; verification is done by running the CLI against a live macOS profile with Automation permissions. See README for the latest manual test status and dates.
+There is no always-on automated test suite; verification is done by running the CLI against a live macOS profile with Automation permissions. See README for the latest manual test status and dates.
+
+The Notes REST API has an opt-in live e2e script:
+
+```bash
+APPLE_NOTES_E2E=1 bash tests/notes_server_e2e.sh
+```
+
+Set `APPLE_NOTES_E2E_INVITEE`, `APPLE_NOTES_E2E_REMOTE_HOST`, and
+`APPLE_NOTES_E2E_REMOTE_SSH_KEY` to include sharing and remote share acceptance.
 
 ## Safe automation guidance
 

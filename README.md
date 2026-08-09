@@ -78,6 +78,8 @@ apple-cli/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── README.md
+├── openapi/
+│   └── notes-server.yaml
 ├── assets/
 │   └── apple-cli-banner.png
 ├── docs/
@@ -114,6 +116,86 @@ See [docs/notes-private-helper-protocol.md](docs/notes-private-helper-protocol.m
 
 ---
 
+## Notes REST API Server
+
+`apple notes server` starts a local OpenAPI-backed REST server for Notes. The
+server reads [openapi/notes-server.yaml](openapi/notes-server.yaml) at build
+time and generates the Axum route table from operation IDs in that spec. Runtime
+handlers call `apple-notes-helper`, which prefers the injected private Notes
+helper on SIP-disabled/private-helper-capable machines and falls back only when
+`--backend auto` cannot use that route.
+
+```bash
+apple notes server --bind 127.0.0.1:3768
+apple notes server --token "$APPLE_NOTES_SERVER_TOKEN"
+```
+
+Useful endpoints:
+
+```text
+GET    /openapi.yaml
+GET    /health
+GET    /v1/accounts
+GET    /v1/folders
+POST   /v1/folders
+POST   /v1/folders/delete
+POST   /v1/folders/rename
+GET    /v1/notes
+POST   /v1/notes
+GET    /v1/notes/search
+GET    /v1/notes/{noteId}
+PATCH  /v1/notes/{noteId}
+DELETE /v1/notes/{noteId}
+POST   /v1/notes/{noteId}/move
+GET    /v1/notes/{noteId}/attachments
+POST   /v1/notes/{noteId}/attachments
+GET    /v1/notes/{noteId}/attachments/content
+POST   /v1/notes/{noteId}/attachments/delete
+POST   /v1/shares
+POST   /v1/shares/accept
+GET    /v1/webhooks
+POST   /v1/webhooks
+DELETE /v1/webhooks/{webhookId}
+```
+
+Notes IDs such as `x-coredata://...` are opaque and contain slashes. When using
+an ID in a path parameter, encode it as `b64:<base64url-no-padding(id)>`.
+JSON body fields such as share `noteId` may use the raw ID or the same `b64:`
+form. Note create/update endpoints accept HTML bodies and attachments either
+as local file paths or inline `dataBase64` payloads. Inline attachments are
+written to temporary files before being handed to Notes, then deleted after
+`APPLE_NOTES_SERVER_TEMP_ATTACHMENT_TTL_SECS` seconds (default: 600) so Notes
+has time to materialize the file. Set `APPLE_NOTES_SERVER_TEMP_DIR` to choose
+where those files are staged.
+
+Webhook subscriptions are in-memory and polling-based. Notes does not expose a
+native AppleScript push-change feed, so the server polls `notes.list` and emits
+`note.created`, `note.updated`, and `note.deleted` events to subscribed URLs.
+
+Live end-to-end testing is source-controlled but opt-in because it touches a
+real macOS Notes profile:
+
+```bash
+APPLE_NOTES_E2E=1 bash tests/notes_server_e2e.sh
+```
+
+To exercise sharing and remote share acceptance, also provide an invitee and
+remote machine:
+
+```bash
+APPLE_NOTES_E2E=1 \
+APPLE_NOTES_E2E_INVITEE=chat@bre.land \
+APPLE_NOTES_E2E_REMOTE_HOST=100.95.244.120 \
+APPLE_NOTES_E2E_REMOTE_SSH_KEY="$HOME/.ssh/id_ed25519" \
+bash tests/notes_server_e2e.sh
+```
+
+The script creates and renames folders, creates a note with HTML table content,
+adds inline PNG images, reads note and attachment content back, moves/searches
+the note, checks local webhook delivery, and deletes the test data.
+
+---
+
 ## Commands Reference
 
 ### notes
@@ -125,6 +207,7 @@ apple notes list|get|create|update|delete|move|search|show
 apple notes share
 apple notes shared list|get|accept
 apple notes attachments list|save|delete
+apple notes server
 ```
 
 Examples:
