@@ -4,7 +4,7 @@ Read this first if you are an LLM/agent working in this repo.
 
 ## What this is
 
-`apple-cli` is a local-first macOS CLI that drives **Notes**, **Reminders**, **Calendar**, and **Messages** via AppleScript. It runs entirely on device and requires macOS Automation permissions for each target app.
+`apple-cli` is a local-first macOS CLI that drives **Notes**, **Reminders**, **Calendar**, and **Messages**. Notes is private-helper-only through `apple-notes-helper`; Reminders, Calendar, and Messages use AppleScript. It runs entirely on device.
 
 Binary name: `apple`
 
@@ -30,9 +30,11 @@ nix build
 nix develop
 ```
 
-First run will trigger Automation permission prompts for Notes/Reminders/Calendar/Messages.
+First run of Reminders/Calendar/Messages commands will trigger Automation permission prompts.
 If commands fail with `-10827` or `AppleEvent handler failed`, enable permissions:
 System Settings → Privacy & Security → Automation.
+
+Notes commands require a lab Mac where DYLD library injection into Notes is allowed, usually with SIP/library-injection protections relaxed.
 
 ## Repo map
 
@@ -87,7 +89,7 @@ Notes:
 - `apple notes folders list|create|delete`
 - Notes REST API only: `POST /v1/folders/rename`
 - `apple notes list|get|create|update|delete|move|search|show`
-- `apple notes share [--backend auto|ui|private]`
+- `apple notes share [--backend auto|private]`
 - `apple notes shared list|get|accept`
 - `apple notes attachments list|save|delete`
 - `apple notes server`
@@ -114,18 +116,17 @@ Messages:
 
 ## Known limitations
 
-- Notes: attachment delete can fail on some macOS builds. Deleting the note removes attachments reliably.
-- Notes: sharing invitations are UI-automated through the Notes share sheet; the AppleScript dictionary only exposes the read-only `shared` flag.
-- Notes: `notes share --backend private` and `notes shared accept` compile and inject temporary private helpers into Notes. They only work on lab machines where DYLD library injection into Notes is allowed, and they quit/relaunch Notes.
-- Notes: `notes share` defaults to `--backend auto`, preferring the private helper when its SIP preflight passes and otherwise using the UI share-sheet backend.
+- Notes: all Notes CLI and REST operations go through `apple-notes-helper --backend private`; `auto` is accepted only as an alias for `private`.
+- Notes: private helpers compile and inject temporary Objective-C dylibs into Notes. They only work on lab machines where DYLD library injection into Notes is allowed, and they quit/relaunch Notes.
 - Notes: private helpers preflight SIP and fail fast when injection is likely blocked. `APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1` bypasses that check for known-good lab setups.
-- Notes REST API: `apple notes server` binds to localhost by default and serves `/openapi.yaml`. Webhook subscriptions are in-memory and polling-based because Notes does not expose native AppleScript push-change events.
+- Notes: attachment delete can fail on some macOS builds. Deleting the note removes attachments reliably.
+- Notes REST API: `apple notes server` binds to localhost by default and serves `/openapi.yaml`. Webhook subscriptions are in-memory and polling-based.
 - Calendar: alarm delete can fail on some macOS builds; status updates are best-effort.
 - Messages: no transcript/history, read receipts, typing indicators, stickers, or voice notes (not exposed in AppleScript dictionary).
 
 ## Testing
 
-There is no always-on automated test suite; verification is done by running the CLI against a live macOS profile with Automation permissions. See README for the latest manual test status and dates.
+There is no always-on automated test suite; live Notes verification is done against a private-helper-capable macOS profile. See README for the latest manual test status and dates.
 
 The Notes REST API has an opt-in live e2e script:
 
@@ -145,6 +146,6 @@ These commands can delete user data (notes, reminders, events). When adding or r
 
 ## When making changes
 
-- Keep AppleScript code in the relevant module.
+- Do not add AppleScript fallback paths for Notes. Keep Notes behavior behind `apple-notes-helper`; AppleScript remains appropriate for Reminders/Calendar/Messages.
 - Update README and AGENTS.md when command surface changes.
 - If you add a new command group, add it to `src/main.rs` and to the README command list.

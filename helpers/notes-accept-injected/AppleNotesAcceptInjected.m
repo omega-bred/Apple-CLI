@@ -13,6 +13,13 @@ static NSString *defaultResultPath(void) {
     return [dir stringByAppendingPathComponent:@"notes-accept-result.json"];
 }
 
+static long acceptTimeoutSeconds(void) {
+    NSString *value = [[[NSProcessInfo processInfo] environment] objectForKey:@"APPLE_CLI_NOTES_ACCEPT_TIMEOUT"];
+    NSInteger parsed = value.integerValue;
+    if (parsed <= 0) return 120;
+    return MAX((long)parsed, 1L);
+}
+
 static void writeResult(NSDictionary *result) {
     NSString *path = [[[NSProcessInfo processInfo] environment] objectForKey:@"APPLE_CLI_NOTES_ACCEPT_RESULT"];
     if (path.length == 0) {
@@ -59,6 +66,7 @@ static void performAccept(void) {
             }
 
             NSURL *url = [NSURL URLWithString:urlString];
+            long timeoutSeconds = acceptTimeoutSeconds();
             if (!url) {
                 writeResult(@{@"status": @"error", @"error": @"invalid share URL"});
                 return;
@@ -94,7 +102,7 @@ static void performAccept(void) {
                     dispatch_semaphore_signal(sema);
                 });
 
-            long wait = dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, 120 * NSEC_PER_SEC));
+            long wait = dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, timeoutSeconds * NSEC_PER_SEC));
             if (wait != 0) {
                 writeResult(@{@"status": @"error", @"stage": @"accept", @"url": urlString, @"error": @"timed out accepting share URL"});
                 return;

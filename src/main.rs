@@ -239,16 +239,16 @@ struct NotesShareArgs {
     /// Apple Account email/handle to invite
     #[arg(long)]
     email: String,
-    /// Sharing backend: auto, ui, or private
-    #[arg(long, default_value = "auto")]
+    /// Sharing backend: private, or auto as an alias for private
+    #[arg(long, default_value = "private")]
     backend: String,
-    /// Share-sheet service to use: copy-link, messages, or mail
+    /// Deprecated share-sheet option; private sharing creates an iCloud share directly
     #[arg(long, default_value = "copy-link")]
     service: String,
-    /// Seconds to wait for Notes/System Events UI state changes
+    /// Seconds to wait for Notes private helper state changes
     #[arg(long, default_value = "30")]
     timeout: u64,
-    /// Open the share sheet and stop before selecting a service or entering an invitee
+    /// Deprecated UI share-sheet option
     #[arg(long)]
     open_only: bool,
 }
@@ -310,8 +310,8 @@ pub struct NotesServerArgs {
     /// Bind address for the local Notes REST API
     #[arg(long, default_value = "127.0.0.1:3768")]
     bind: String,
-    /// Sharing/backend preference passed to apple-notes-helper: auto, applescript, ui, or private
-    #[arg(long, default_value = "auto")]
+    /// Backend preference passed to apple-notes-helper: private, or auto as an alias for private
+    #[arg(long, default_value = "private")]
     backend: String,
     /// Path or binary name for apple-notes-helper
     #[arg(long, default_value = "apple-notes-helper")]

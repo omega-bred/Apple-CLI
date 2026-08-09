@@ -560,7 +560,7 @@ components:
           type: string
         backend:
           type: string
-          enum: [auto, ui, private, applescript]
+          enum: [auto, private]
         timeout:
           type: integer
           minimum: 1

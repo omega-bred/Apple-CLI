@@ -782,6 +782,14 @@ async fn helper_call(
     params: Value,
 ) -> Result<Value, ApiError> {
     let _guard = state.helper_lock.lock().await;
+    helper_call_unlocked(state, op, params).await
+}
+
+async fn helper_call_unlocked(
+    state: &ServerState,
+    op: &'static str,
+    params: Value,
+) -> Result<Value, ApiError> {
     let helper_path = state.helper_path.clone();
     let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || helper_call_blocking(helper_path, backend, op, params))
@@ -937,8 +945,18 @@ async fn materialize_attachments(
             )
         })?;
         let file_name = attachment_file_name(attachment.name, attachment.mime_type.as_deref());
-        let path = temp_attachment_dir()
-            .join(format!("apple-notes-server-{}-{file_name}", Uuid::new_v4()));
+        let attachment_dir =
+            temp_attachment_dir().join(format!("apple-notes-server-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&attachment_dir)
+            .await
+            .map_err(|error| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    format!("failed to create temporary attachment dir: {error}"),
+                )
+            })?;
+        let path = attachment_dir.join(file_name);
         tokio::fs::write(&path, bytes).await.map_err(|error| {
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -947,7 +965,7 @@ async fn materialize_attachments(
             )
         })?;
         paths.push(path.to_string_lossy().to_string());
-        temp_paths.push(path);
+        temp_paths.push(attachment_dir);
     }
 
     Ok((paths, temp_paths))
@@ -986,7 +1004,11 @@ fn sanitize_file_name(name: &str) -> String {
 
 async fn cleanup_temp_paths(paths: Vec<PathBuf>) {
     for path in paths {
-        let _ = tokio::fs::remove_file(path).await;
+        if path.is_dir() {
+            let _ = tokio::fs::remove_dir_all(path).await;
+        } else {
+            let _ = tokio::fs::remove_file(path).await;
+        }
     }
 }
 
@@ -1099,8 +1121,9 @@ async fn webhook_poll_loop(state: Arc<ServerState>) {
             continue;
         }
 
-        let snapshot = match notes_snapshot(&state).await {
-            Ok(snapshot) => snapshot,
+        let snapshot = match notes_snapshot_if_idle(&state).await {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => continue,
             Err(error) => {
                 eprintln!("notes webhook poll failed: {}", error.message);
                 continue;
@@ -1114,8 +1137,13 @@ async fn webhook_poll_loop(state: Arc<ServerState>) {
     }
 }
 
-async fn notes_snapshot(state: &ServerState) -> Result<HashMap<String, Value>, ApiError> {
-    let result = helper_call(state, "notes.list", json!({})).await?;
+async fn notes_snapshot_if_idle(
+    state: &ServerState,
+) -> Result<Option<HashMap<String, Value>>, ApiError> {
+    let Ok(_guard) = state.helper_lock.try_lock() else {
+        return Ok(None);
+    };
+    let result = helper_call_unlocked(state, "notes.list", json!({})).await?;
     let notes = result.as_array().ok_or_else(|| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1123,14 +1151,16 @@ async fn notes_snapshot(state: &ServerState) -> Result<HashMap<String, Value>, A
             "notes.list did not return an array",
         )
     })?;
-    Ok(notes
-        .iter()
-        .filter_map(|note| {
-            note.get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_string(), note.clone()))
-        })
-        .collect())
+    Ok(Some(
+        notes
+            .iter()
+            .filter_map(|note| {
+                note.get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id.to_string(), note.clone()))
+            })
+            .collect(),
+    ))
 }
 
 async fn dispatch_snapshot_changes(

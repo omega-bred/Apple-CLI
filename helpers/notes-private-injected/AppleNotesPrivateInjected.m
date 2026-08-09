@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
 #import <CoreData/CoreData.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -624,7 +625,8 @@ static void performNotesCreate(NSDictionary *params) {
         return;
     }
     NSLog(@"apple-cli private op notes.create: insert note");
-    NSString *title = params[@"title"] ?: params[@"name"] ?: @"Untitled";
+    NSString *explicitTitle = params[@"title"] ?: params[@"name"] ?: @"";
+    NSString *title = explicitTitle.length > 0 ? explicitTitle : @"Untitled";
     NSString *body = params[@"html"] ?: params[@"body"] ?: @"";
     id note = [NSEntityDescription insertNewObjectForEntityForName:@"ICNote" inManagedObjectContext:moc];
     id noteData = [NSEntityDescription insertNewObjectForEntityForName:@"ICNoteData" inManagedObjectContext:moc];
@@ -643,7 +645,10 @@ static void performNotesCreate(NSDictionary *params) {
     NSLog(@"apple-cli private op notes.create: add attachments");
     addAttachmentsToNote(note, params[@"attachments"] ?: @[]);
     if ([note respondsToSelector:NSSelectorFromString(@"regenerateTitle:snippet:")]) {
-        ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, NSSelectorFromString(@"regenerateTitle:snippet:"), YES, YES);
+        ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, NSSelectorFromString(@"regenerateTitle:snippet:"), explicitTitle.length == 0, YES);
+    }
+    if (explicitTitle.length > 0) {
+        safeSetValue(note, @"title", explicitTitle);
     }
     NSError *error = nil;
     NSLog(@"apple-cli private op notes.create: save");
@@ -737,6 +742,29 @@ static void performNotesSearch(NSDictionary *params) {
         }
     }
     writeOK(items);
+}
+
+static void performNotesShow(NSDictionary *params) {
+    NSManagedObjectContext *moc = operationContext();
+    if (!moc) return;
+    NSError *error = nil;
+    id note = noteForID(moc, params[@"id"] ?: params[@"noteId"] ?: @"", &error);
+    if (!note) {
+        writeError(@"notes.show", @"note not found");
+        return;
+    }
+    NSURL *url = nil;
+    if ([note isKindOfClass:[NSManagedObject class]]) {
+        url = [[(NSManagedObject *)note objectID] URIRepresentation];
+    }
+    BOOL opened = NO;
+    if (url) {
+        opened = [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+    NSMutableDictionary *result = [noteJSON(note, NO) mutableCopy];
+    result[@"status"] = opened ? @"ok" : @"unsupported";
+    result[@"url"] = url.absoluteString ?: @"";
+    writeOK(result);
 }
 
 static void performAttachmentsList(NSDictionary *params) {
@@ -899,6 +927,7 @@ static void performPrivateOperation(void) {
             if ([op isEqualToString:@"notes.delete"]) { performNotesDelete(params); return; }
             if ([op isEqualToString:@"notes.move"]) { performNotesMove(params); return; }
             if ([op isEqualToString:@"notes.search"]) { performNotesSearch(params); return; }
+            if ([op isEqualToString:@"notes.show"]) { performNotesShow(params); return; }
             if ([op isEqualToString:@"attachments.list"]) { performAttachmentsList(params); return; }
             if ([op isEqualToString:@"attachments.save"]) { performAttachmentsSave(params); return; }
             if ([op isEqualToString:@"attachments.delete"]) { performAttachmentsDelete(params); return; }
@@ -910,14 +939,6 @@ static void performPrivateOperation(void) {
 }
 
 static BOOL shouldRunPrivateOperationOnMainQueue(void) {
-    NSDictionary *request = readRequest();
-    NSString *op = request[@"op"] ?: @"probe";
-    NSDictionary *params = request[@"params"] ?: @{};
-    NSArray *attachments = params[@"attachments"] ?: @[];
-    BOOL addsAttachments = [attachments isKindOfClass:[NSArray class]] && attachments.count > 0;
-    if (([op isEqualToString:@"notes.create"] || [op isEqualToString:@"notes.update"]) && addsAttachments) {
-        return NO;
-    }
     return YES;
 }
 

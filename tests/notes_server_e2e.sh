@@ -269,6 +269,16 @@ def wait_for_image_attachment(note_id, timeout=30):
         time.sleep(1)
     raise AssertionError(f"expected an image attachment, got {last}")
 
+def wait_for_attachment_removed(note_id, name, timeout=30):
+    deadline = time.time() + timeout
+    last = []
+    while time.time() < deadline:
+        last = request("GET", note_path(note_id, "/attachments"))["result"]
+        if all((attachment.get("name") or attachment.get("filename")) != name for attachment in last):
+            return last
+        time.sleep(1)
+    raise AssertionError(f"expected attachment {name!r} to be removed, got {last}")
+
 webhook_port = free_port()
 webhook_server = http.server.ThreadingHTTPServer(("127.0.0.1", webhook_port), WebhookHandler)
 threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
@@ -350,6 +360,12 @@ try:
         }]
     })
     wait_for_attachments(created_note_id, 3)
+
+    step("deleting one image attachment")
+    request("POST", note_path(created_note_id, "/attachments/delete"), {
+        "name": "notes-server-e2e-image-3.png"
+    })
+    wait_for_attachment_removed(created_note_id, "notes-server-e2e-image-3.png")
 
     step("searching and moving the note")
     search = request("GET", f"/v1/notes/search?query={urllib.parse.quote(title)}&limit=5")["result"]

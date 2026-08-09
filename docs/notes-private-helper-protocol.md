@@ -1,47 +1,39 @@
 # Notes Private Helper Protocol
 
-This document sketches the stable interface for a private Apple Notes backend.
-The intent is to let the Rust CLI and a future Java library use the same
-contract while the implementation can choose the safest available macOS
-mechanism per operation.
+This document describes the stable interface for the private Apple Notes
+backend. The intent is to let the Rust CLI, REST server, and a future Java
+library use the same process contract while private macOS APIs remain isolated
+behind one helper binary.
 
 ## Recommendation
 
-Do not replace every Notes command with private APIs in one step. Port Notes to
-a backend model:
+Notes is private-helper-only:
 
-- `applescript`: supported macOS automation path for ordinary CRUD.
-- `private`: private Notes/CoreData/CloudKit backend for functionality that
-  AppleScript cannot expose, especially sharing and share acceptance.
-- `auto`: prefer `private` when the machine supports the required helper mode,
-  otherwise fall back to `applescript` or UI automation.
+- `private`: private Notes/CoreData/CloudKit backend for all Notes operations.
+- `auto`: accepted as an alias for `private`.
+- `applescript` and `ui`: rejected for Notes operations.
 
 The private backend is more capable and less UI-fragile, but it is also tied to
 undocumented Notes frameworks and OS-version behavior. The stable surface should
-therefore be a process protocol, not direct Objective-C symbols.
+therefore be this process protocol, not direct Objective-C symbols.
 
 ## Runtime Shape
 
 Use a helper executable with JSON Lines over stdin/stdout:
 
 ```bash
-apple-notes-helper --stdio --backend auto
+apple-notes-helper --stdio --backend private
 ```
 
 The current `apple-notes-helper` binary implements protocol version `1`.
-Account, folder, note, and attachment operations use the injected Notes-process
-private helper when `--backend private` is selected, or when `--backend auto`
-detects a SIP-disabled/private-helper-capable machine. `shares.create` and
-`shares.accept` call dedicated Notes-process private helpers so Java callers can
-use the same stable protocol while the internals continue to harden.
+Account, folder, note, attachment, sharing, and share-acceptance operations use
+injected Notes-process private helpers. `--backend auto` maps to `private`; no
+AppleScript or UI automation fallback exists for Notes.
 
 The helper may internally choose one of two execution modes:
 
-- `standalone`: private framework/CoreData access in the helper process.
-  Good candidate for account/folder/note/attachment CRUD.
 - `notes-process`: a small dylib loaded into the Notes process.
-  Required for operations that need Notes' CloudKit entitlements, such as
-  creating or accepting iCloud shares.
+  Required for Notes' Core Data/CloudKit state and entitlements.
 
 The caller should not need to know which mode handled a request. It can inspect
 `result.backend` and `result.mode` for diagnostics.
@@ -92,10 +84,10 @@ Error response:
   "ok": false,
   "error": {
     "code": "permission.denied",
-    "message": "Accessibility access is disabled",
+    "message": "private Notes helper requires DYLD library injection into Notes",
     "retryable": false,
     "details": {
-      "permission": "accessibility"
+      "permission": "private-notes-helper"
     }
   }
 }
@@ -172,9 +164,9 @@ Response result:
 }
 ```
 
-Preserve the Core Data URI as `id` because it is what Notes AppleScript and the
-current private helpers can resolve reliably. Add CloudKit `recordName` when
-available, but do not make Java callers depend on it as the primary key.
+Preserve the Core Data URI as `id` because it is what the private helpers can
+resolve reliably. Add CloudKit `recordName` when available, but do not make
+Java callers depend on it as the primary key.
 
 ### Folder
 
@@ -259,9 +251,9 @@ available, but do not make Java callers depend on it as the primary key.
 - `shares.removeParticipant`
 - `shares.stopSharing`
 
-Only `shares.create` and `shares.accept` have private-helper entry points today.
-Participant management should be added once the helper can reliably round-trip
-real shares across two accounts.
+`shares.create` and `shares.accept` are implemented. Participant management
+should be added once the helper can reliably round-trip real shares across two
+accounts.
 
 ## Example Requests
 
@@ -330,7 +322,7 @@ try (AppleNotesClient notes = AppleNotesClient.start("/usr/local/bin/apple-notes
 
 The client implementation should:
 
-- Start `apple-notes-helper --stdio --backend auto`.
+- Start `apple-notes-helper --stdio --backend private`.
 - Use one reader thread for stdout JSON lines.
 - Keep a `ConcurrentHashMap<String, CompletableFuture<Response>>` by request id.
 - Serialize requests with Jackson or another stable JSON library.
@@ -346,7 +338,7 @@ public final class AppleNotesClient implements AutoCloseable {
     private final ConcurrentHashMap<String, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
 
     public static AppleNotesClient start(String helperPath) throws IOException {
-        Process process = new ProcessBuilder(helperPath, "--stdio", "--backend", "auto").start();
+        Process process = new ProcessBuilder(helperPath, "--stdio", "--backend", "private").start();
         return new AppleNotesClient(process);
     }
 
@@ -374,16 +366,14 @@ public final class AppleNotesClient implements AutoCloseable {
 }
 ```
 
-## Migration Plan
+## Roadmap
 
-1. Keep current CLI commands stable.
-2. Introduce `apple-notes-helper --stdio` and implement `helper.capabilities`.
-3. Keep the OpenAPI server and Java client on the helper protocol instead of
+1. Keep current CLI commands stable while routing all Notes behavior through
+   `apple-notes-helper`.
+2. Keep the OpenAPI server and Java client on the helper protocol instead of
    binding directly to private Objective-C symbols.
-4. Add share participant listing/update/remove once private share creation is
+3. Add share participant listing/update/remove once private share creation is
    reliable across two Apple accounts.
-5. Make the Rust CLI call the helper for Notes when `--backend private` or
-   `--backend auto` selects private, with AppleScript retained as fallback.
 
 ## Compatibility Rules
 
@@ -391,7 +381,6 @@ public final class AppleNotesClient implements AutoCloseable {
 - New response fields are allowed.
 - New operations are allowed.
 - Breaking changes require protocol version `2`.
-- All timestamps should eventually be ISO-8601 UTC. Existing AppleScript-facing
-  commands may keep human-readable macOS date strings until migrated.
+- All timestamps should eventually be ISO-8601 UTC.
 - Private helper results should include diagnostic `backend` and `mode`, but
   Java callers should not branch on them except for logging and support.
