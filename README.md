@@ -128,8 +128,19 @@ for Notes operations.
 
 ```bash
 apple notes server --bind 127.0.0.1:3768
-apple notes server --token "$APPLE_NOTES_SERVER_TOKEN"
+apple notes server --password "$APPLE_NOTES_SERVER_PASSWORD"
 ```
+
+REST requests authenticate with `Authorization: Bearer <password>`. The server
+accepts the password from any of these sources, in precedence order:
+
+- `--password` or `APPLE_NOTES_SERVER_PASSWORD`
+- `--password-file` or `APPLE_NOTES_SERVER_PASSWORD_FILE`
+- `--config` or `APPLE_NOTES_SERVER_CONFIG`
+- legacy `--token` or `APPLE_NOTES_SERVER_TOKEN`
+
+Config files may be JSON (`{"password":"..."}`), key/value
+(`password = "..."`), or a single raw password line.
 
 Useful endpoints:
 

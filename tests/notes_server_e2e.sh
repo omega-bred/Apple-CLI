@@ -21,7 +21,11 @@ fi
 APPLE_BIN="${APPLE_NOTES_E2E_APPLE_BIN:-$ROOT/target/debug/apple}"
 HELPER_BIN="${APPLE_NOTES_E2E_HELPER_BIN:-$ROOT/target/debug/apple-notes-helper}"
 LOCAL_BIND="${APPLE_NOTES_E2E_BIND:-127.0.0.1:3769}"
-LOCAL_TOKEN="${APPLE_NOTES_E2E_TOKEN:-apple-notes-e2e-token}"
+LOCAL_TOKEN="${APPLE_NOTES_E2E_PASSWORD:-${APPLE_NOTES_E2E_TOKEN:-apple-notes-e2e-token}}"
+LOCAL_AUTH_ARGS=(--token "$LOCAL_TOKEN")
+if [[ -n "${APPLE_NOTES_E2E_PASSWORD:-}" ]]; then
+  LOCAL_AUTH_ARGS=(--password "$LOCAL_TOKEN")
+fi
 TMP_ROOT="${TMPDIR:-/tmp}/apple-notes-server-e2e-$$"
 LOCAL_LOG="$TMP_ROOT/local-server.log"
 LOCAL_PID=""
@@ -56,7 +60,7 @@ APPLE_NOTES_SERVER_TEMP_ATTACHMENT_TTL_SECS="${APPLE_NOTES_E2E_TEMP_ATTACHMENT_T
 APPLE_NOTES_SERVER_TEMP_DIR="${APPLE_NOTES_E2E_TEMP_DIR:-/tmp}" \
 "$APPLE_BIN" notes server \
   --bind "$LOCAL_BIND" \
-  --token "$LOCAL_TOKEN" \
+  "${LOCAL_AUTH_ARGS[@]}" \
   --helper "$HELPER_BIN" \
   --backend "${APPLE_NOTES_E2E_BACKEND:-auto}" \
   --poll-interval "${APPLE_NOTES_E2E_POLL_INTERVAL:-2}" \
@@ -95,7 +99,11 @@ while True:
         time.sleep(0.5)
 PY
 
-REMOTE_TOKEN="${APPLE_NOTES_E2E_REMOTE_TOKEN:-apple-notes-remote-e2e-token}"
+REMOTE_TOKEN="${APPLE_NOTES_E2E_REMOTE_PASSWORD:-${APPLE_NOTES_E2E_REMOTE_TOKEN:-apple-notes-remote-e2e-token}}"
+REMOTE_AUTH_FLAG="--token"
+if [[ -n "${APPLE_NOTES_E2E_REMOTE_PASSWORD:-}" ]]; then
+  REMOTE_AUTH_FLAG="--password"
+fi
 REMOTE_PORT="${APPLE_NOTES_E2E_REMOTE_PORT:-3779}"
 if [[ -n "${APPLE_NOTES_E2E_REMOTE_HOST:-}" ]]; then
   REMOTE_DIR="/tmp/apple-notes-server-e2e-$$"
@@ -107,7 +115,7 @@ if [[ -n "${APPLE_NOTES_E2E_REMOTE_HOST:-}" ]]; then
   ssh "${remote_key_args[@]}" "$APPLE_NOTES_E2E_REMOTE_HOST" "mkdir -p '$REMOTE_DIR'"
   scp "${remote_key_args[@]}" "$APPLE_BIN" "$HELPER_BIN" "$APPLE_NOTES_E2E_REMOTE_HOST:$REMOTE_DIR/"
   ssh "${remote_key_args[@]}" "$APPLE_NOTES_E2E_REMOTE_HOST" \
-    "chmod +x '$REMOTE_DIR/apple' '$REMOTE_DIR/apple-notes-helper'; APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1 '$REMOTE_DIR/apple' notes server --bind 127.0.0.1:$REMOTE_PORT --token '$REMOTE_TOKEN' --helper '$REMOTE_DIR/apple-notes-helper' --backend '${APPLE_NOTES_E2E_REMOTE_BACKEND:-auto}' --poll-interval 2 > '$REMOTE_DIR/server.log' 2>&1 & echo \$! > '$REMOTE_DIR/server.pid'"
+    "chmod +x '$REMOTE_DIR/apple' '$REMOTE_DIR/apple-notes-helper'; APPLE_CLI_SKIP_PRIVATE_NOTES_PREFLIGHT=1 '$REMOTE_DIR/apple' notes server --bind 127.0.0.1:$REMOTE_PORT $REMOTE_AUTH_FLAG '$REMOTE_TOKEN' --helper '$REMOTE_DIR/apple-notes-helper' --backend '${APPLE_NOTES_E2E_REMOTE_BACKEND:-auto}' --poll-interval 2 > '$REMOTE_DIR/server.log' 2>&1 & echo \$! > '$REMOTE_DIR/server.pid'"
 fi
 
 python3 - "$LOCAL_BIND" "$LOCAL_TOKEN" <<'PY'
@@ -212,7 +220,7 @@ def remote_api(method, path, body=None, timeout=180):
     if key:
         ssh += ["-i", key]
     ssh.append(host)
-    remote_token = os.environ.get("APPLE_NOTES_E2E_REMOTE_TOKEN", "apple-notes-remote-e2e-token")
+    remote_token = os.environ.get("APPLE_NOTES_E2E_REMOTE_PASSWORD") or os.environ.get("APPLE_NOTES_E2E_REMOTE_TOKEN", "apple-notes-remote-e2e-token")
     remote_port = os.environ.get("APPLE_NOTES_E2E_REMOTE_PORT", "3779")
     data = json.dumps(body or {})
     curl = (

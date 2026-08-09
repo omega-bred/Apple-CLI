@@ -322,6 +322,15 @@ pub struct NotesServerArgs {
     /// Optional bearer token required for API requests
     #[arg(long, env = "APPLE_NOTES_SERVER_TOKEN")]
     token: Option<String>,
+    /// Optional REST API password. Requests authenticate with Authorization: Bearer <password>.
+    #[arg(long, env = "APPLE_NOTES_SERVER_PASSWORD")]
+    password: Option<String>,
+    /// File containing the REST API password as a single line
+    #[arg(long, env = "APPLE_NOTES_SERVER_PASSWORD_FILE")]
+    password_file: Option<String>,
+    /// Config file containing password as JSON, key=value, or a single raw password line
+    #[arg(long, env = "APPLE_NOTES_SERVER_CONFIG")]
+    config: Option<String>,
     /// Allow unauthenticated requests even when binding a non-loopback address
     #[arg(long)]
     allow_unauthenticated: bool,

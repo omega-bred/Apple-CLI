@@ -10,6 +10,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
@@ -246,16 +247,17 @@ async fn run_notes_server(args: crate::NotesServerArgs) -> Result<()> {
         .bind
         .parse()
         .with_context(|| format!("invalid bind address: {}", args.bind))?;
-    if !args.allow_unauthenticated && args.token.is_none() && !bind.ip().is_loopback() {
+    let auth_secret = resolve_server_auth_secret(&args)?;
+    if !args.allow_unauthenticated && auth_secret.is_none() && !bind.ip().is_loopback() {
         return Err(anyhow!(
-            "refusing to bind unauthenticated Notes API on non-loopback address {bind}; pass --token or --allow-unauthenticated"
+            "refusing to bind unauthenticated Notes API on non-loopback address {bind}; pass --password, --token, or --allow-unauthenticated"
         ));
     }
 
     let state = Arc::new(ServerState {
         helper_path: resolve_helper_path(args.helper),
         backend: args.backend,
-        token: args.token,
+        token: auth_secret,
         poll_interval: Duration::from_secs(args.poll_interval),
         webhooks: RwLock::new(HashMap::new()),
         helper_lock: Mutex::new(()),
@@ -290,6 +292,102 @@ fn resolve_helper_path(helper: String) -> PathBuf {
         .and_then(|path| path.parent().map(|parent| parent.join(&helper)))
         .filter(|path| path.exists())
         .unwrap_or(helper_path)
+}
+
+fn resolve_server_auth_secret(args: &crate::NotesServerArgs) -> Result<Option<String>> {
+    if let Some(password) = non_empty_secret(args.password.as_deref()) {
+        return Ok(Some(password.to_string()));
+    }
+
+    if let Some(path) = args
+        .password_file
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+    {
+        return read_password_file(path);
+    }
+
+    if let Some(path) = args
+        .config
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+    {
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("failed to read Notes server config file {path}"))?;
+        return parse_server_config_password(&text);
+    }
+
+    Ok(non_empty_secret(args.token.as_deref()).map(ToString::to_string))
+}
+
+fn read_password_file(path: &str) -> Result<Option<String>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read Notes server password file {path}"))?;
+    Ok(non_empty_secret(Some(text.trim())).map(ToString::to_string))
+}
+
+fn parse_server_config_password(text: &str) -> Result<Option<String>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    if trimmed.starts_with('{') {
+        let value: Value =
+            serde_json::from_str(trimmed).context("failed to parse Notes server JSON config")?;
+        return Ok(value
+            .get("password")
+            .or_else(|| value.get("token"))
+            .and_then(Value::as_str)
+            .and_then(|secret| non_empty_secret(Some(secret)))
+            .map(ToString::to_string));
+    }
+
+    let mut raw_lines = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        raw_lines.push(line);
+        if let Some(value) =
+            config_value_for_key(line, "password").or_else(|| config_value_for_key(line, "token"))
+        {
+            return Ok(non_empty_secret(Some(&value)).map(ToString::to_string));
+        }
+    }
+
+    if raw_lines.len() == 1 {
+        return Ok(non_empty_secret(raw_lines.first().copied()).map(ToString::to_string));
+    }
+
+    Err(anyhow!(
+        "Notes server config must contain password or token as JSON, key=value, or a single raw password line"
+    ))
+}
+
+fn config_value_for_key(line: &str, expected_key: &str) -> Option<String> {
+    let (key, value) = line.split_once('=').or_else(|| line.split_once(':'))?;
+    if key.trim() != expected_key {
+        return None;
+    }
+    Some(strip_config_quotes(value.trim()).to_string())
+}
+
+fn strip_config_quotes(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(value)
+}
+
+fn non_empty_secret(secret: Option<&str>) -> Option<&str> {
+    secret.map(str::trim).filter(|secret| !secret.is_empty())
 }
 
 pub async fn get_open_api() -> impl IntoResponse {
@@ -1245,4 +1343,53 @@ fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_args() -> crate::NotesServerArgs {
+        crate::NotesServerArgs {
+            bind: "127.0.0.1:3768".to_string(),
+            backend: "private".to_string(),
+            helper: "apple-notes-helper".to_string(),
+            poll_interval: 10,
+            token: None,
+            password: None,
+            password_file: None,
+            config: None,
+            allow_unauthenticated: false,
+        }
+    }
+
+    #[test]
+    fn parse_server_config_reads_json_password() {
+        let parsed = parse_server_config_password(r#"{ "password": "from-json" }"#).unwrap();
+        assert_eq!(parsed.as_deref(), Some("from-json"));
+    }
+
+    #[test]
+    fn parse_server_config_reads_key_value_password() {
+        let parsed = parse_server_config_password("password = \"from-kv\"\n").unwrap();
+        assert_eq!(parsed.as_deref(), Some("from-kv"));
+    }
+
+    #[test]
+    fn explicit_password_takes_precedence_over_config_and_legacy_token() {
+        let dir = std::env::temp_dir().join(format!("apple-notes-server-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("notes-server.conf");
+        std::fs::write(&config, "password = from-config\n").unwrap();
+
+        let mut args = server_args();
+        args.token = Some("legacy-token".to_string());
+        args.password = Some("from-cli".to_string());
+        args.config = Some(config.to_string_lossy().to_string());
+
+        let resolved = resolve_server_auth_secret(&args).unwrap();
+        assert_eq!(resolved.as_deref(), Some("from-cli"));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
