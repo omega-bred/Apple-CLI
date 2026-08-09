@@ -2,6 +2,7 @@
 name = "apple-cli"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 description = "Apple CLI for macOS (AppleScript-powered)"
 license = "MIT"
 readme = "README.md"
@@ -14,8 +15,23 @@ categories = ["command-line-utilities"]
 name = "apple"
 path = "src/main.rs"
 
+[[bin]]
+name = "apple-notes-helper"
+path = "src/bin/apple-notes-helper.rs"
+
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
+axum = "0.7"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive", "env"] }
+mime_guess = "2.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
+tokio = { version = "1.40", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1.10", features = ["serde", "v4"] }
+
+[build-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"

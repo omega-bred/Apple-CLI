@@ -4,10 +4,15 @@ mod calendar;
 mod common;
 mod messages;
 mod notes;
+mod notes_server;
 mod reminders;
 
 #[derive(Parser)]
-#[command(name = "apple", version, about = "Apple CLI for macOS (Notes/Reminders/Calendar/Messages)")]
+#[command(
+    name = "apple",
+    version,
+    about = "Apple CLI for macOS (Notes/Reminders/Calendar/Messages)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: TopCommand,
@@ -61,7 +66,10 @@ enum NotesSubcommand {
     Update(NotesUpdateArgs),
     Delete(NotesDeleteArgs),
     Move(NotesMoveArgs),
+    Share(NotesShareArgs),
+    Shared(NotesSharedCmd),
     Search(NotesSearchArgs),
+    Server(NotesServerArgs),
     Show(NotesShowArgs),
     Attachments(NotesAttachmentsCmd),
 }
@@ -225,6 +233,66 @@ struct NotesMoveArgs {
 }
 
 #[derive(Args)]
+struct NotesShareArgs {
+    /// Note id
+    id: String,
+    /// Apple Account email/handle to invite
+    #[arg(long)]
+    email: String,
+    /// Sharing backend: private, or auto as an alias for private
+    #[arg(long, default_value = "private")]
+    backend: String,
+    /// Deprecated share-sheet option; private sharing creates an iCloud share directly
+    #[arg(long, default_value = "copy-link")]
+    service: String,
+    /// Seconds to wait for Notes private helper state changes
+    #[arg(long, default_value = "30")]
+    timeout: u64,
+    /// Deprecated UI share-sheet option
+    #[arg(long)]
+    open_only: bool,
+}
+
+#[derive(Args)]
+struct NotesSharedCmd {
+    #[command(subcommand)]
+    command: NotesSharedSubcommand,
+}
+
+#[derive(Subcommand)]
+enum NotesSharedSubcommand {
+    List(NotesSharedListArgs),
+    Get(NotesSharedGetArgs),
+    Accept(NotesSharedAcceptArgs),
+}
+
+#[derive(Args)]
+struct NotesSharedListArgs {
+    /// Target account name (default: first account)
+    #[arg(long)]
+    account: Option<String>,
+    /// Optional folder name filter
+    #[arg(long)]
+    folder: Option<String>,
+}
+
+#[derive(Args)]
+struct NotesSharedGetArgs {
+    /// Note id
+    id: String,
+}
+
+#[derive(Args)]
+struct NotesSharedAcceptArgs {
+    /// iCloud Notes share URL to accept
+    #[arg(long)]
+    url: String,
+    /// Seconds to wait for Notes private helper state changes
+    #[arg(long, default_value = "60")]
+    timeout: u64,
+}
+
+#[derive(Args)]
 struct NotesSearchArgs {
     /// Target account name (default: first account)
     #[arg(long)]
@@ -235,6 +303,28 @@ struct NotesSearchArgs {
     /// Optional limit (0 = no limit)
     #[arg(long, default_value = "0")]
     limit: usize,
+}
+
+#[derive(Args)]
+pub struct NotesServerArgs {
+    /// Bind address for the local Notes REST API
+    #[arg(long, default_value = "127.0.0.1:3768")]
+    bind: String,
+    /// Backend preference passed to apple-notes-helper: private, or auto as an alias for private
+    #[arg(long, default_value = "private")]
+    backend: String,
+    /// Path or binary name for apple-notes-helper
+    #[arg(long, default_value = "apple-notes-helper")]
+    helper: String,
+    /// Poll interval in seconds for webhook note-change detection
+    #[arg(long, default_value = "10")]
+    poll_interval: u64,
+    /// Optional bearer token required for API requests
+    #[arg(long, env = "APPLE_NOTES_SERVER_TOKEN")]
+    token: Option<String>,
+    /// Allow unauthenticated requests even when binding a non-loopback address
+    #[arg(long)]
+    allow_unauthenticated: bool,
 }
 
 #[derive(Args)]
@@ -703,7 +793,14 @@ fn main() -> Result<()> {
             NotesSubcommand::Update(args) => notes::notes_update(args),
             NotesSubcommand::Delete(args) => notes::notes_delete(args),
             NotesSubcommand::Move(args) => notes::notes_move(args),
+            NotesSubcommand::Share(args) => notes::notes_share(args),
+            NotesSubcommand::Shared(cmd) => match cmd.command {
+                NotesSharedSubcommand::List(args) => notes::notes_shared_list(args),
+                NotesSharedSubcommand::Get(args) => notes::notes_shared_get(args),
+                NotesSharedSubcommand::Accept(args) => notes::notes_shared_accept(args),
+            },
             NotesSubcommand::Search(args) => notes::notes_search(args),
+            NotesSubcommand::Server(args) => notes_server::notes_server(args),
             NotesSubcommand::Show(args) => notes::notes_show(args),
             NotesSubcommand::Attachments(cmd) => match cmd.command {
                 NotesAttachmentsSubcommand::List(args) => notes::notes_attachments_list(args),
@@ -748,7 +845,9 @@ fn main() -> Result<()> {
             MessagesSubcommand::Buddies(args) => messages::messages_buddies(args),
             MessagesSubcommand::Send(args) => messages::messages_send(args),
             MessagesSubcommand::Chats(args) => messages::messages_chats(args),
-            MessagesSubcommand::ChatParticipants(args) => messages::messages_chat_participants(args),
+            MessagesSubcommand::ChatParticipants(args) => {
+                messages::messages_chat_participants(args)
+            }
             MessagesSubcommand::SendChat(args) => messages::messages_send_chat(args),
         },
     }
