@@ -1,0 +1,12 @@
+groupId: land.bre.apple
+artifactId: apple-notes-java-client
+artifactVersion: 0.1.0
+apiPackage: land.bre.apple.notes.api
+modelPackage: land.bre.apple.notes.model
+invokerPackage: land.bre.apple.notes.client
+packageName: land.bre.apple.notes.client
+library: okhttp-gson
+dateLibrary: java8
+serializationLibrary: gson
+hideGenerationTimestamp: true
+useRuntimeException: true

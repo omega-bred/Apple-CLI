@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: macOS build and Java client
+    runs-on: macos-latest
+
+    env:
+      OPENAPI_GENERATOR_VERSION: 7.8.0
+      OPENAPI_SPEC: openapi/notes-server.yaml
+      OPENAPI_GENERATOR_CONFIG: openapi/java-client-config.yaml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test Rust binaries
+        run: cargo test --bins
+
+      - name: Build release binaries
+        run: cargo build --release --bins
+
+      - name: Package Rust binaries
+        run: |
+          mkdir -p build/apple-cli-macos/bin
+          cp target/release/apple build/apple-cli-macos/bin/
+          cp target/release/apple-notes-helper build/apple-cli-macos/bin/
+          tar -czf build/apple-cli-macos.tar.gz -C build apple-cli-macos
+
+      - name: Generate Java OpenAPI client
+        run: scripts/generate-java-client.sh build/java-client
+
+      - name: Package Java OpenAPI client
+        run: |
+          mkdir -p build/artifacts
+          (cd build && zip -qr artifacts/apple-notes-java-client.zip java-client)
+          find build/java-client/target -maxdepth 1 -name "*.jar" -exec cp {} build/artifacts/ \;
+
+      - name: Upload macOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-cli-macos
+          path: build/apple-cli-macos.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Java client
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-notes-java-client
+          path: |
+            build/artifacts/apple-notes-java-client.zip
+            build/artifacts/*.jar
+          if-no-files-found: error
