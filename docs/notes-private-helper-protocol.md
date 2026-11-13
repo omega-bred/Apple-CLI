@@ -17,6 +17,9 @@ HTML validation of text/lines, URL destinations, hrefs, table rows/cells/text,
 headings, lists and title. Its `validation` is `passed`, `loss_detected` or
 `unverified`. Inspect actionable `warnings` even when the envelope is successful.
 `writeCompleted: true` means corrections require a read first, never a blind retry.
+Each write performs a fresh `notes.get` helper operation after saving. If that
+read fails, the saved note and ID are returned with `unverified` and a warning;
+the completed write is never retried. This adds a Notes restart per write.
 Readback `body`/`html` stay HTML. Native hyperlink clickability, table editability
 and later iCloud sync are not guaranteed by this validation. `helper.capabilities`
 advertises supported inputs and these limits under `formatting`.

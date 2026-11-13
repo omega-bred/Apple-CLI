@@ -384,7 +384,7 @@ impl PreparedWrite {
         result["formatting"] = json!({
             "contractVersion": 1, "inputFormat": self.format,
             "validation": if !verified { "unverified" } else if loss { "loss_detected" } else { "passed" },
-            "validationScope": "post-save HTML readback; does not certify native editability or later iCloud sync",
+            "validationScope": "post-save independent Notes HTML readback; does not certify native editability or later iCloud sync",
             "checks": checks, "warnings": warnings, "writeCompleted": true
         });
         result

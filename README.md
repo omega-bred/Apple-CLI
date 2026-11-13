@@ -266,7 +266,10 @@ Every write returns `result.formatting` with `contractVersion`, `inputFormat`,
 `validation` (`passed`, `loss_detected`, or `unverified`), individual `checks`,
 and actionable `warnings`. Validation compares post-save HTML text/line boundaries,
 URL destinations, anchor hrefs, table rows/cells/text, headings, lists and title.
-It does not certify later iCloud synchronization or native editability. A warning
+The helper reopens Notes for an independent read after saving; writes take an
+additional helper operation. Readback failure returns `unverified` with the saved
+note ID, never a retryable write failure. Validation does not certify later iCloud
+synchronization or native editability. A warning
 means **the write already completed**: read the saved note before correcting it;
 do not blindly retry and risk duplicate notes/attachments. Invalid or conflicting
 explicit format fields fail before Notes is opened. `/v1/capabilities` advertises

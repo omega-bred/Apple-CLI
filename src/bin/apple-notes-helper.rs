@@ -144,13 +144,45 @@ fn dispatch(op: &str, params: &Value, backend: &str) -> Result<Value> {
         "notes.create" | "notes.update" => {
             let prepared = note_formatting::prepare(params)?;
             let result = run_private_operation(op, &prepared.params)?;
-            Ok(prepared.validate(result))
+            Ok(verify_saved_write(prepared, result, |id| {
+                run_private_operation("notes.get", &json!({"id": id}))
+            }))
         }
         private_op if should_try_private_operation(private_op, backend) => {
             run_private_operation(private_op, params)
         }
         other => Err(anyhow!("unsupported operation: {other}")),
     }
+}
+
+// A fresh helper operation reopens Notes and reads persisted content. A failed
+// verification must never turn a completed write into a retryable write failure.
+fn verify_saved_write(
+    prepared: note_formatting::PreparedWrite,
+    mut written: Value,
+    read_note: impl FnOnce(&str) -> Result<Value>,
+) -> Value {
+    let readback = written.get("id").and_then(Value::as_str).map(read_note);
+    if let Some(Ok(mut saved)) = readback {
+        if saved.is_object() && saved.get("id") == written.get("id") {
+            if let Some(title) = written
+                .as_object_mut()
+                .and_then(|note| note.remove("_formattingExpectedTitle"))
+            {
+                saved["_formattingExpectedTitle"] = title;
+            }
+            return prepared.validate(saved);
+        }
+    }
+    let mut result = prepared.validate(written);
+    result["formatting"]["validation"] = json!("unverified");
+    result["formatting"]["validationScope"] =
+        json!("independent readback unavailable; checks apply only to immediate import readback");
+    result["formatting"]["warnings"].as_array_mut().unwrap().push(json!({
+        "code": "formatting.readback_failed",
+        "message": "The write completed, but independent Notes readback failed. Get this note before correcting it; do not repeat the completed create/update."
+    }));
+    result
 }
 
 fn should_try_private_operation(op: &str, backend: &str) -> bool {
@@ -693,6 +725,34 @@ fn param_usize(params: &Value, key: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_write_uses_independent_readback_and_does_not_hide_completed_writes() {
+        let params = json!({"content":"one\n\ntwo", "contentFormat":"plain_text"});
+        let written = json!({"id":"test", "title":"Stable", "html":"<div>one</div><div><br></div><div>two</div>", "_formattingExpectedTitle":"Stable"});
+        let changed = verify_saved_write(
+            note_formatting::prepare(&params).unwrap(),
+            written.clone(),
+            |id| {
+                assert_eq!(id, "test");
+                Ok(json!({"id":"test", "title":"Changed on reload", "html":"<div>one two</div>"}))
+            },
+        );
+        assert_eq!(changed["formatting"]["checks"]["lineBreaks"], false);
+        assert_eq!(changed["formatting"]["checks"]["title"], false);
+        let failed =
+            verify_saved_write(note_formatting::prepare(&params).unwrap(), written, |_| {
+                Err(anyhow!("read failed"))
+            });
+        assert_eq!(failed["id"], "test");
+        assert_eq!(failed["formatting"]["validation"], "unverified");
+        assert_eq!(failed["formatting"]["writeCompleted"], true);
+        assert!(failed["formatting"]["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "formatting.readback_failed"));
+    }
 
     #[test]
     fn every_notes_protocol_operation_is_private_supported() {
