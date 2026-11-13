@@ -233,6 +233,56 @@ apple notes update <note_id> --body "<p>Updated</p>" --attach /path/file.pdf
 apple notes attachments list <note_id>
 ```
 
+#### Notes formatting contract (v1)
+
+For REST and MCP writes, prefer `content` plus `contentFormat`:
+
+```json
+{"title":"Trip plan","contentFormat":"plain_text","content":"Flights\n\nCompare these options."}
+```
+
+`plain_text` escapes markup and converts every newline (including blank lines)
+into an explicit HTML line block. `html` uses Notes' HTML importer: use headings,
+paragraphs, `br`, `ul`/`ol` lists and simple rectangular `table`/`tr`/`td` cells.
+HTML source newlines follow HTML whitespace rules. `markdown` converts headings,
+lists, links and pipe tables to HTML, and turns soft breaks into explicit breaks.
+CSS layout, merged/nested tables and native hyperlink behavior are not guaranteed.
+Native Notes tables are best-effort: checking HTML rows/cells does not prove that
+the resulting table is natively editable on every macOS version.
+
+Link destinations are appended to link labels as visible URL fallbacks when the
+label doesn't already contain the URL. This preserves a source when Notes strips
+an anchor's `href`; anchor retention is checked separately and may warn.
+Entity-escaped query strings such as `?a=1&amp;b=2` are compared after decoding.
+
+Legacy `html` remains explicit HTML. Legacy `body` detects HTML elements and
+otherwise preserves plain-text newlines. If both are supplied, `html` wins and
+the result warns. Do not combine legacy fields with `content`. An empty content
+string clears the body; omitted content leaves it unchanged. Content-only updates
+preserve the title; `title` (or legacy `name`) changes it explicitly. Readback
+`body` and `html` remain HTML for compatibility.
+
+Every write returns `result.formatting` with `contractVersion`, `inputFormat`,
+`validation` (`passed`, `loss_detected`, or `unverified`), individual `checks`,
+and actionable `warnings`. Validation compares post-save HTML text/line boundaries,
+URL destinations, anchor hrefs, table rows/cells/text, headings, lists and title.
+It does not certify later iCloud synchronization or native editability. A warning
+means **the write already completed**: read the saved note before correcting it;
+do not blindly retry and risk duplicate notes/attachments. Invalid or conflicting
+explicit format fields fail before Notes is opened. `/v1/capabilities` advertises
+this contract and the build revision when supplied by the build environment.
+
+The CLI supports the same explicit contract:
+
+```bash
+apple notes create --name "Trip plan" --content-format markdown --content '# Flights'
+apple notes update <note_id> --content-format plain_text --content $'First line\n\nNext section'
+```
+
+Run `cargo test --bins` and `bash tests/note_content_test.sh` for formatting
+regressions and native title/content ordering tests without reading user notes.
+Live tests remain opt-in and must use isolated disposable notes.
+
 Notes limitations:
 - Notes operations are private-helper-only. `--backend auto` is accepted as an alias for `private`; `ui` and `applescript` are rejected.
 - The helper compiles a temporary Objective-C dylib with `clang`, quits/relaunches Notes with `DYLD_INSERT_LIBRARIES`, and writes the helper result from inside the Notes sandbox. This is intended for local lab machines with SIP/library-injection protections relaxed.

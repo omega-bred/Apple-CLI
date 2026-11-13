@@ -10,6 +10,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "../note_formatting.rs"]
+mod note_formatting;
+
 const INJECTED_PRIVATE_HELPER_SOURCE: &str =
     include_str!("../../helpers/notes-private-injected/AppleNotesPrivateInjected.m");
 const INJECTED_SHARE_HELPER_SOURCE: &str =
@@ -138,6 +141,11 @@ fn dispatch(op: &str, params: &Value, backend: &str) -> Result<Value> {
         "shared.get" => run_private_operation("notes.get", params),
         "shares.create" => run_private_share(params),
         "shares.accept" => run_private_accept(params),
+        "notes.create" | "notes.update" => {
+            let prepared = note_formatting::prepare(params)?;
+            let result = run_private_operation(op, &prepared.params)?;
+            Ok(prepared.validate(result))
+        }
         private_op if should_try_private_operation(private_op, backend) => {
             run_private_operation(private_op, params)
         }
@@ -602,6 +610,8 @@ fn classify_error(error: &anyhow::Error) -> &'static str {
         "permission.denied"
     } else if message.contains("timed out") || message.contains("-1712") {
         "notes.timeout"
+    } else if message.starts_with("invalid.params:") {
+        "invalid.params"
     } else if message.contains("unsupported") {
         "backend.unsupported"
     } else if message.contains("icloud") || message.contains("share") {
@@ -619,6 +629,8 @@ fn helper_capabilities(backend: &str) -> Result<Value> {
     Ok(json!({
         "protocolVersion": 1,
         "backend": if backend == "auto" { "private" } else { backend },
+        "buildRevision": option_env!("APPLE_CLI_REVISION").unwrap_or("unknown"),
+        "formatting": note_formatting::capabilities(),
         "capabilities": {
             "notesCrud": true,
             "attachments": true,

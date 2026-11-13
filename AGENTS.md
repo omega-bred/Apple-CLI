@@ -126,7 +126,17 @@ Messages:
 
 ## Testing
 
-There is no always-on automated test suite; live Notes verification is done against a private-helper-capable macOS profile. See README for the latest manual test status and dates.
+Run `cargo test --bins` and `bash tests/note_content_test.sh`. CI tests Rust,
+native title/content import ordering with a fake Notes object (no user-data access),
+release binaries and the generated Java client. Native Notes formatting still
+requires opt-in verification on a private-helper-capable macOS profile.
+
+`src/note_formatting.rs` owns the v1 formatting contract at the helper boundary.
+REST/MCP and CLI accept `content` with `contentFormat` (`plain_text`, `html`,
+`markdown`); legacy `html`/`body` remain supported. Readback stays HTML. Preserve
+titles after HTML import and include formatting validation/warnings in write
+results. Do not claim native table editability or hyperlink guarantees based only
+on HTML readback; loss warnings refer to already-completed writes.
 
 The Notes REST API has an opt-in live e2e script:
 

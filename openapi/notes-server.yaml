@@ -138,7 +138,7 @@ paths:
                 $ref: "#/components/schemas/Envelope"
     post:
       operationId: createNote
-      summary: Create a note with optional file path or inline base64 attachments.
+      summary: Create a note. Prefer content with contentFormat (plain_text, html, markdown). Headings, sections, lists and simple tables use HTML import; links get visible URL fallbacks. Inspect result.formatting for loss warnings; native links/tables are best-effort.
       requestBody:
         required: true
         content:
@@ -191,7 +191,7 @@ paths:
                 $ref: "#/components/schemas/Envelope"
     patch:
       operationId: updateNote
-      summary: Update note title/body and add optional attachments.
+      summary: Update content while preserving the title unless title/name is supplied. Prefer content with contentFormat (plain_text, html, markdown); plain text preserves newlines. Inspect result.formatting for URL, line-break, table and title loss warnings. A warning means the write already happened; do not blindly retry.
       parameters:
         - $ref: "#/components/parameters/NoteId"
       requestBody:
@@ -498,10 +498,20 @@ components:
           type: string
         name:
           type: string
+          description: Legacy alias for title. Content-only updates preserve the existing title.
+        content:
+          type: string
+          description: Explicit content, including an empty string to clear it. Requires contentFormat; do not combine with html or body.
+        contentFormat:
+          type: string
+          enum: [plain_text, html, markdown]
+          description: plain_text escapes markup and preserves every newline/blank line. html uses Notes HTML import. markdown supports headings, lists, links and pipe tables; soft breaks become explicit line breaks. Native link/table fidelity depends on macOS and is checked after import.
         html:
           type: string
+          description: Legacy explicit HTML input. Prefer content/contentFormat. HTML whitespace follows HTML rules; use br or block elements for line breaks. Link destinations are also included as visible text because Notes may strip href attributes.
         body:
           type: string
+          description: Legacy input. Recognized HTML elements retain HTML behavior; otherwise treated as plain text with preserved newlines. If html and body are both supplied, html wins with a warning. Prefer content/contentFormat to remove ambiguity. Readback body/html are always HTML.
         attachments:
           type: array
           items:

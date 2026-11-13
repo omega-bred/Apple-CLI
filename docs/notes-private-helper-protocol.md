@@ -1,5 +1,26 @@
 # Notes Private Helper Protocol
 
+## Formatting contract v1
+
+`notes.create` and `notes.update` accept `content` plus `contentFormat`
+(`plain_text`, `html`, `markdown`). Do not combine these with legacy `html` or
+`body`. Plain text escapes markup and preserves newlines and blank lines; Markdown
+supports headings, lists, links and pipe tables, with soft breaks preserved.
+Legacy `body` detects HTML elements and otherwise uses plain text; legacy `html`
+remains explicit HTML. When both legacy fields are supplied, HTML wins and warns.
+An empty content string clears the body; omission leaves it unchanged. Body-only
+updates preserve the title unless `title`/`name` is explicitly supplied.
+
+HTML import is best-effort. Link labels include visible destination fallbacks
+because Notes may strip href attributes. `result.formatting` reports post-save
+HTML validation of text/lines, URL destinations, hrefs, table rows/cells/text,
+headings, lists and title. Its `validation` is `passed`, `loss_detected` or
+`unverified`. Inspect actionable `warnings` even when the envelope is successful.
+`writeCompleted: true` means corrections require a read first, never a blind retry.
+Readback `body`/`html` stay HTML. Native hyperlink clickability, table editability
+and later iCloud sync are not guaranteed by this validation. `helper.capabilities`
+advertises supported inputs and these limits under `formatting`.
+
 This document describes the stable interface for the private Apple Notes
 backend. The intent is to let the Rust CLI, REST server, and a future Java
 library use the same process contract while private macOS APIs remain isolated

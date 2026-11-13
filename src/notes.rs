@@ -68,7 +68,9 @@ pub fn notes_create(args: NotesCreateArgs) -> Result<()> {
             "account": args.account,
             "folder": args.folder,
             "title": args.name,
-            "html": args.body,
+            "body": args.body,
+            "content": args.content,
+            "contentFormat": args.content_format,
             "attachments": non_empty_array(args.attach)
         })),
     )
@@ -80,7 +82,9 @@ pub fn notes_update(args: NotesUpdateArgs) -> Result<()> {
         compact_json(json!({
             "id": args.id,
             "title": args.name,
-            "html": args.body,
+            "body": args.body,
+            "content": args.content,
+            "contentFormat": args.content_format,
             "attachments": non_empty_array(args.attach)
         })),
     )

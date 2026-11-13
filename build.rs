@@ -15,6 +15,7 @@ struct Operation {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=APPLE_CLI_REVISION");
     println!("cargo:rerun-if-changed=openapi/notes-server.yaml");
 
     let spec = fs::read_to_string("openapi/notes-server.yaml")

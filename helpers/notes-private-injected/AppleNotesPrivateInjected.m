@@ -608,6 +608,21 @@ static void addAttachmentsToNote(id note, NSArray *paths) {
     }
 }
 
+// Notes' HTML importer can regenerate the title. Restore it after all body changes.
+// nil means title-only/attachment-only update; an empty body explicitly clears content.
+static NSString *applyNoteContent(id note, NSString *body, NSString *explicitTitle) {
+    NSString *title = explicitTitle ?: safeString(note, @"title");
+    if (body != nil) {
+        if (![note respondsToSelector:NSSelectorFromString(@"setScriptingBody:")]) {
+            @throw [NSException exceptionWithName:@"ContentImportUnavailable"
+                reason:@"Notes does not support HTML content import on this macOS build" userInfo:nil];
+        }
+        ((void (*)(id, SEL, id))objc_msgSend)(note, NSSelectorFromString(@"setScriptingBody:"), body);
+    }
+    safeSetValue(note, @"title", title);
+    return title;
+}
+
 static void performNotesCreate(NSDictionary *params) {
     NSLog(@"apple-cli private op notes.create: context");
     NSManagedObjectContext *moc = operationContext();
@@ -638,10 +653,7 @@ static void performNotesCreate(NSDictionary *params) {
     safeSetValue(note, @"title", title);
     safeSetValue(note, @"creationDate", [NSDate date]);
     safeSetValue(note, @"modificationDate", [NSDate date]);
-    if ([note respondsToSelector:NSSelectorFromString(@"setScriptingBody:")]) {
-        NSLog(@"apple-cli private op notes.create: set body");
-        ((void (*)(id, SEL, id))objc_msgSend)(note, NSSelectorFromString(@"setScriptingBody:"), body);
-    }
+    applyNoteContent(note, body, title);
     NSLog(@"apple-cli private op notes.create: add attachments");
     addAttachmentsToNote(note, params[@"attachments"] ?: @[]);
     if ([note respondsToSelector:NSSelectorFromString(@"regenerateTitle:snippet:")]) {
@@ -657,7 +669,9 @@ static void performNotesCreate(NSDictionary *params) {
         return;
     }
     NSLog(@"apple-cli private op notes.create: write result");
-    writeOK(noteJSON(note, YES));
+    NSMutableDictionary *result = [noteJSON(note, YES) mutableCopy];
+    if (explicitTitle.length > 0) result[@"_formattingExpectedTitle"] = explicitTitle;
+    writeOK(result);
 }
 
 static void performNotesUpdate(NSDictionary *params) {
@@ -669,19 +683,19 @@ static void performNotesUpdate(NSDictionary *params) {
         writeError(@"notes.update", @"note not found");
         return;
     }
-    NSString *title = params[@"title"] ?: params[@"name"] ?: @"";
-    NSString *body = params[@"html"] ?: params[@"body"] ?: @"";
-    if (title.length > 0) safeSetValue(note, @"title", title);
-    if (body.length > 0 && [note respondsToSelector:NSSelectorFromString(@"setScriptingBody:")]) {
-        ((void (*)(id, SEL, id))objc_msgSend)(note, NSSelectorFromString(@"setScriptingBody:"), body);
-    }
+    NSString *title = params[@"title"] ?: params[@"name"];
+    NSString *body = params[@"html"] ?: params[@"body"];
+    NSString *expectedTitle = applyNoteContent(note, body, title);
     addAttachmentsToNote(note, params[@"attachments"] ?: @[]);
+    safeSetValue(note, @"title", expectedTitle);
     safeSetValue(note, @"modificationDate", [NSDate date]);
     if (!saveContext(moc, &error)) {
         writeError(@"notes.update", [error description]);
         return;
     }
-    writeOK(noteJSON(note, YES));
+    NSMutableDictionary *result = [noteJSON(note, YES) mutableCopy];
+    result[@"_formattingExpectedTitle"] = expectedTitle;
+    writeOK(result);
 }
 
 static void performNotesDelete(NSDictionary *params) {
@@ -942,6 +956,7 @@ static BOOL shouldRunPrivateOperationOnMainQueue(void) {
     return YES;
 }
 
+#ifndef APPLE_CLI_TESTING
 __attribute__((constructor))
 static void AppleCLINotesPrivateInjected(void) {
     NSLog(@"apple-cli notes generic private helper loaded");
@@ -952,3 +967,4 @@ static void AppleCLINotesPrivateInjected(void) {
         performPrivateOperation();
     });
 }
+#endif

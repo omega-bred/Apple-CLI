@@ -128,6 +128,9 @@ pub struct WriteNoteRequest {
     name: Option<String>,
     html: Option<String>,
     body: Option<String>,
+    content: Option<String>,
+    #[serde(rename = "contentFormat")]
+    content_format: Option<String>,
     #[serde(default)]
     attachments: Vec<AttachmentInput>,
 }
@@ -1003,13 +1006,15 @@ fn helper_call_blocking(
 async fn write_note_params(request: WriteNoteRequest) -> Result<(Value, Vec<PathBuf>), ApiError> {
     let (attachment_paths, temp_paths) = materialize_attachments(request.attachments).await?;
     let title = request.title.or(request.name);
-    let html = request.html.or(request.body);
     Ok((
         compact_json(json!({
             "account": request.account,
             "folder": request.folder,
             "title": title,
-            "html": html,
+            "html": request.html,
+            "body": request.body,
+            "content": request.content,
+            "contentFormat": request.content_format,
             "attachments": attachment_paths
         })),
         temp_paths,
@@ -1348,6 +1353,23 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn write_request_preserves_explicit_format_and_legacy_fields() {
+        for body in [
+            json!({"content":"one\n\ntwo", "contentFormat":"plain_text"}),
+            json!({"html":"<h1>HTML</h1>", "body":"legacy", "name":"Title"}),
+            json!({"content":"", "contentFormat":"markdown"}),
+        ] {
+            let request: WriteNoteRequest = serde_json::from_value(body.clone()).unwrap();
+            let (params, temp_paths) = write_note_params(request).await.unwrap();
+            assert!(temp_paths.is_empty());
+            for key in ["content", "contentFormat", "html", "body"] {
+                assert_eq!(params.get(key), body.get(key));
+            }
+            assert_eq!(params.get("title"), body.get("name"));
+        }
+    }
 
     fn server_args() -> crate::NotesServerArgs {
         crate::NotesServerArgs {

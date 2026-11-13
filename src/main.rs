@@ -191,9 +191,15 @@ struct NotesCreateArgs {
     /// Note title (default: "Untitled")
     #[arg(long)]
     name: Option<String>,
-    /// Note body (HTML or plain text)
-    #[arg(long)]
-    body: String,
+    /// Legacy body (HTML elements detected; otherwise plain text)
+    #[arg(long, required_unless_present = "content", conflicts_with = "content")]
+    body: Option<String>,
+    /// Explicit content; use with --content-format
+    #[arg(long, requires = "content_format")]
+    content: Option<String>,
+    /// Explicit input format
+    #[arg(long, requires = "content", value_parser = ["plain_text", "html", "markdown"])]
+    content_format: Option<String>,
     /// File(s) to attach
     #[arg(long, num_args = 1..)]
     attach: Vec<String>,
@@ -206,9 +212,15 @@ struct NotesUpdateArgs {
     /// New title
     #[arg(long)]
     name: Option<String>,
-    /// New body (HTML or plain text)
-    #[arg(long)]
+    /// Legacy body (HTML elements detected; otherwise plain text)
+    #[arg(long, conflicts_with = "content")]
     body: Option<String>,
+    /// Explicit content; an empty string clears it
+    #[arg(long, requires = "content_format")]
+    content: Option<String>,
+    /// Explicit input format
+    #[arg(long, requires = "content", value_parser = ["plain_text", "html", "markdown"])]
+    content_format: Option<String>,
     /// File(s) to attach
     #[arg(long, num_args = 1..)]
     attach: Vec<String>,
