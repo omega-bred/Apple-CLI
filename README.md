@@ -291,8 +291,10 @@ plain-text blank lines and titles survive a fresh read, and HTML tables become
 `com.apple.notes.table` attachments. Notes exports imported h1/h2 headings as
 bold 24/18px spans and tables inside object paragraphs; validation recognizes
 that representation. Native href attributes can still disappear, so visible
-URL fallbacks and loss warnings remain necessary. This is platform-specific
-evidence, not a guarantee for every macOS build or native interactive editing.
+URL fallbacks and loss warnings remain necessary. Imported Markdown soft breaks
+can export as Unicode U+2028/U+2029 separators, which retain line boundaries.
+This is platform-specific evidence, not a guarantee for every macOS build or
+native interactive editing.
 
 Notes limitations:
 - Notes operations are private-helper-only. `--backend auto` is accepted as an alias for `private`; `ui` and `applescript` are rejected.

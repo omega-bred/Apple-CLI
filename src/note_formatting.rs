@@ -35,7 +35,8 @@ fn escape(text: &str) -> String {
 }
 
 fn normalize_newlines(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+    text.replace("\r\n", "\n")
+        .replace(['\r', '\u{2028}', '\u{2029}'], "\n")
 }
 
 fn plain_html(text: &str) -> String {
@@ -223,19 +224,25 @@ fn visible(node: &NodeRef, output: &mut String, skip_tables: bool, preformatted:
             output.push_str(&normalize_newlines(&text));
             return;
         }
-        if text.trim().is_empty() && (output.is_empty() || output.ends_with('\n')) {
-            return;
-        }
-        // Source indentation between elements is not a display line break.
-        if text.starts_with(char::is_whitespace)
-            && !output.is_empty()
-            && !output.ends_with(char::is_whitespace)
-        {
-            output.push(' ');
-        }
-        output.push_str(&text.split_whitespace().collect::<Vec<_>>().join(" "));
-        if text.ends_with(char::is_whitespace) && !output.ends_with(' ') {
-            output.push(' ');
+        // Notes exports imported br elements as Unicode line/paragraph separators.
+        // Ordinary HTML source newlines still follow HTML whitespace rules.
+        for (index, part) in text.split(['\u{2028}', '\u{2029}']).enumerate() {
+            if index > 0 {
+                output.push('\n');
+            }
+            if part.trim().is_empty() && (output.is_empty() || output.ends_with('\n')) {
+                continue;
+            }
+            if part.starts_with(char::is_whitespace)
+                && !output.is_empty()
+                && !output.ends_with(char::is_whitespace)
+            {
+                output.push(' ');
+            }
+            output.push_str(&part.split_whitespace().collect::<Vec<_>>().join(" "));
+            if part.ends_with(char::is_whitespace) && !output.ends_with(' ') {
+                output.push(' ');
+            }
         }
         return;
     }
@@ -618,5 +625,24 @@ mod tests {
             "Stable title",
         );
         assert_eq!(unstyled["formatting"]["checks"]["headings"], false);
+    }
+
+    #[test]
+    fn observed_markdown_export_preserves_unicode_soft_line_breaks() {
+        let params = json!({"contentFormat":"markdown", "content": concat!(
+            "# Markdown Section\n\nFirst line\nSecond line\n\n- Markdown item\n\n",
+            "[Source](https://example.com/?a=1&b=2)\n\n| Item | Cost |\n|---|---|\n| Fixture | 30 |")});
+        let actual = include_str!("../tests/fixtures/notes-macos26_3-markdown.html");
+        let result = roundtrip(params, actual, "Stable title");
+        for feature in ["headings", "lineBreaks", "tables", "lists", "urls", "title"] {
+            assert_eq!(result["formatting"]["checks"][feature], true, "{feature}");
+        }
+        assert_eq!(result["formatting"]["checks"]["hyperlinks"], false);
+        let lost = roundtrip(
+            json!({"html":"<div>one<br>two</div>"}),
+            "<div>one two</div>",
+            "Stable title",
+        );
+        assert_eq!(lost["formatting"]["checks"]["lineBreaks"], false);
     }
 }
