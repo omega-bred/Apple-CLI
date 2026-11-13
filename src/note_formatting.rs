@@ -173,6 +173,49 @@ fn compact(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn has_content_outside_tables(node: &NodeRef) -> bool {
+    if let Some(element) = node.as_element() {
+        if element.name.local.as_ref() == "table" {
+            return false;
+        }
+    }
+    if let NodeData::Text(text) = node.data() {
+        return !text.borrow().trim().is_empty();
+    }
+    node.children()
+        .any(|child| has_content_outside_tables(&child))
+}
+
+fn is_native_heading(node: &NodeRef) -> bool {
+    // Observed Notes 26.3 export for imported h1/h2: div > b > span, 24/18px.
+    // Require the entire paragraph to be that styled heading, not arbitrary large text.
+    node.select("b > span[style], strong > span[style]")
+        .unwrap()
+        .any(|span| {
+            let direct = span
+                .as_node()
+                .parent()
+                .and_then(|bold| bold.parent())
+                .as_ref()
+                == Some(node);
+            let attributes = span.attributes.borrow();
+            let size = attributes
+                .get("style")
+                .unwrap_or("")
+                .split(';')
+                .find_map(|declaration| {
+                    let (name, value) = declaration.split_once(':')?;
+                    if !name.trim().eq_ignore_ascii_case("font-size") {
+                        return None;
+                    }
+                    value.trim().strip_suffix("px")?.trim().parse::<u32>().ok()
+                });
+            direct
+                && matches!(size, Some(24 | 18))
+                && compact(&span.text_contents()) == compact(&node.text_contents())
+        })
+}
+
 fn visible(node: &NodeRef, output: &mut String, skip_tables: bool, preformatted: bool) {
     if let NodeData::Text(text) = node.data() {
         let text = text.borrow();
@@ -207,7 +250,11 @@ fn visible(node: &NodeRef, output: &mut String, skip_tables: bool, preformatted:
         output.push('\n');
         return;
     }
-    if name == "table" && skip_tables {
+    let table_wrapper = skip_tables
+        && ["div", "object"].contains(&name)
+        && node.select("table").unwrap().next().is_some()
+        && !has_content_outside_tables(node);
+    if skip_tables && (name == "table" || table_wrapper) {
         if !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
         }
@@ -331,9 +378,10 @@ fn snapshot(html: &str) -> Snapshot {
         );
     }
     snapshot.headings = document
-        .select("h1, h2, h3, h4, h5, h6")
+        .select("h1, h2, h3, h4, h5, h6, div")
         .unwrap()
-        .map(|n| compact(&n.text_contents()))
+        .filter(|node| node.name.local.as_ref() != "div" || is_native_heading(node.as_node()))
+        .map(|node| compact(&node.text_contents()))
         .collect();
     snapshot.lists = document
         .select("li")
@@ -548,5 +596,27 @@ mod tests {
             "Stable title",
         );
         assert_eq!(spans["formatting"]["checks"]["tables"], false);
+    }
+
+    #[test]
+    fn observed_macos_export_preserves_styled_headings_and_table_object_lines() {
+        let params = json!({"html": concat!(
+            "<h1>Fixture Section</h1><p>Intro.</p><div><br></div><h2>Links</h2>",
+            "<p><a href='https://example.com/?a=1&amp;b=2'>Source</a></p>",
+            "<ul><li>First bullet</li><li>Second bullet</li></ul>",
+            "<table><tr><th>Kind</th><th>Value</th></tr><tr><td>Alpha</td><td>10</td></tr></table>",
+            "<table><tr><td>Second table</td><td>20</td></tr></table>")});
+        let actual = include_str!("../tests/fixtures/notes-macos26_3-formatted.html");
+        let result = roundtrip(params, actual, "Stable title");
+        for feature in ["headings", "lineBreaks", "tables", "lists", "urls", "title"] {
+            assert_eq!(result["formatting"]["checks"][feature], true, "{feature}");
+        }
+        assert_eq!(result["formatting"]["checks"]["hyperlinks"], false);
+        let unstyled = roundtrip(
+            json!({"html":"<h1>Heading</h1>"}),
+            "<div><b>Heading</b></div>",
+            "Stable title",
+        );
+        assert_eq!(unstyled["formatting"]["checks"]["headings"], false);
     }
 }

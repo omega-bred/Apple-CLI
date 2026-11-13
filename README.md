@@ -286,6 +286,14 @@ Run `cargo test --bins` and `bash tests/note_content_test.sh` for formatting
 regressions and native title/content ordering tests without reading user notes.
 Live tests remain opt-in and must use isolated disposable notes.
 
+Live verification on macOS 26.3 (25D125), November 13, 2026, confirmed that
+plain-text blank lines and titles survive a fresh read, and HTML tables become
+`com.apple.notes.table` attachments. Notes exports imported h1/h2 headings as
+bold 24/18px spans and tables inside object paragraphs; validation recognizes
+that representation. Native href attributes can still disappear, so visible
+URL fallbacks and loss warnings remain necessary. This is platform-specific
+evidence, not a guarantee for every macOS build or native interactive editing.
+
 Notes limitations:
 - Notes operations are private-helper-only. `--backend auto` is accepted as an alias for `private`; `ui` and `applescript` are rejected.
 - The helper compiles a temporary Objective-C dylib with `clang`, quits/relaunches Notes with `DYLD_INSERT_LIBRARIES`, and writes the helper result from inside the Notes sandbox. This is intended for local lab machines with SIP/library-injection protections relaxed.
